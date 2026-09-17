@@ -1,0 +1,31 @@
+{
+  "name": "revela",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "license": "GPL-3.0-or-later",
+  "description": "Revela — free, open-source photo catalog & darkroom (Lightroom alternative) with film negative conversion.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "icons": "node scripts/gen-icons.mjs",
+    "release": "node scripts/release.mjs"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.4.0",
+    "@tauri-apps/plugin-dialog": "^2.2.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zustand": "^5.0.3"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.4.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.7"
+  }
+}
