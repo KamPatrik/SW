@@ -13,7 +13,9 @@ use crate::state::{base_for, AppState};
 type CmdResult<T> = Result<T, String>;
 
 fn err<E: std::fmt::Display>(e: E) -> String {
-    e.to_string()
+    let s = e.to_string();
+    crate::log_line("ERROR", &s);
+    s
 }
 
 #[derive(Serialize)]

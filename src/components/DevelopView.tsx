@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 import * as api from "../api";
 import { filteredPhotos, useStore } from "../store";
 import type { RenderResult } from "../types";
@@ -6,7 +7,7 @@ import CropOverlay from "./CropOverlay";
 import Panels from "./Panels";
 
 function Filmstrip() {
-  const photos = useStore(filteredPhotos);
+  const photos = useStore(useShallow(filteredPhotos));
   const activeId = useStore((s) => s.activeId);
   const thumbs = useStore((s) => s.thumbs);
 

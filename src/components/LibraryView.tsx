@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { filteredPhotos, useStore } from "../store";
 import type { Photo } from "../types";
 
@@ -79,7 +80,9 @@ export default function LibraryView() {
   const filterFlag = useStore((s) => s.filterFlag);
   const setFilterRating = useStore((s) => s.setFilterRating);
   const setFilterFlag = useStore((s) => s.setFilterFlag);
-  const photos = useStore(filteredPhotos);
+  // useShallow is required: a plain array-returning selector would create a new
+  // reference on every snapshot and send React into an infinite render loop.
+  const photos = useStore(useShallow(filteredPhotos));
   const total = useStore((s) => s.photos.length);
 
   return (

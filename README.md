@@ -31,6 +31,16 @@ No runtimes needed — WebView2 ships with Windows 10/11.
 Windows SmartScreen may warn about an unknown publisher until the binary is
 code-signed — choose *More info → Run anyway*.
 
+## Reporting bugs
+
+- **UI crash** — the app shows a crash screen: press *Copy report* and paste it
+  into a GitHub issue along with what you were doing.
+- **Failed operations** show up as red toasts (bottom right); the exact backend
+  errors are also appended to `%APPDATA%\dev.revela.app\revela.log` — attach that
+  file to the issue.
+- Include the file type that triggered the problem (camera model for RAWs,
+  scanner + bit depth for TIFF scans) and ideally a sample file.
+
 ### Releasing a new version (maintainer)
 
 ```powershell
