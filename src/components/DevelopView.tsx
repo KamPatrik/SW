@@ -10,24 +10,56 @@ function Filmstrip() {
   const photos = useStore(useShallow(filteredPhotos));
   const activeId = useStore((s) => s.activeId);
   const thumbs = useStore((s) => s.thumbs);
+  const activeRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     photos.forEach((p) => useStore.getState().requestThumb(p.id));
   }, [photos]);
 
+  useEffect(() => {
+    activeRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [activeId]);
+
+  const idx = photos.findIndex((p) => p.id === activeId);
+
   return (
-    <div className="filmstrip">
-      {photos.map((p) => (
-        <div
-          key={p.id}
-          className={p.id === activeId ? "strip-thumb active" : "strip-thumb"}
-          onClick={() => void useStore.getState().loadRecipeFor(p.id)}
-          title={p.filename}
-        >
-          {thumbs[p.id] ? <img src={thumbs[p.id]} alt="" draggable={false} /> : <span>…</span>}
+    <>
+      <div className="filmstrip">
+        {photos.map((p) => (
+          <div
+            key={p.id}
+            ref={p.id === activeId ? activeRef : undefined}
+            className={p.id === activeId ? "strip-thumb active" : "strip-thumb"}
+            onClick={() => void useStore.getState().loadRecipeFor(p.id)}
+            title={p.filename}
+          >
+            {thumbs[p.id] ? <img src={thumbs[p.id]} alt="" draggable={false} /> : <span>…</span>}
+          </div>
+        ))}
+      </div>
+      {photos.length > 1 && (
+        <div className="strip-nav">
+          <input
+            type="range"
+            min={1}
+            max={photos.length}
+            step={1}
+            value={idx >= 0 ? idx + 1 : 1}
+            title="Scrub through the current folder / filter"
+            onChange={(e) => {
+              const p = photos[Number(e.target.value) - 1];
+              if (p && p.id !== activeId) void useStore.getState().loadRecipeFor(p.id);
+            }}
+          />
+          <span className="strip-pos">
+            {idx >= 0 ? idx + 1 : "–"} / {photos.length}
+            {idx >= 0 && idx < photos.length - 1 && (
+              <span className="strip-left"> · {photos.length - idx - 1} left</span>
+            )}
+          </span>
         </div>
-      ))}
-    </div>
+      )}
+    </>
   );
 }
 

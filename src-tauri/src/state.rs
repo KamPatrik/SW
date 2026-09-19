@@ -10,7 +10,8 @@ use crate::engine::{decode, ImageF32};
 pub const PREVIEW_MAX: u32 = 2560;
 
 pub struct PreviewCache {
-    map: HashMap<i64, Arc<ImageF32>>,
+    // path stored with each entry: row ids are reused by SQLite after deletes
+    map: HashMap<i64, (String, Arc<ImageF32>)>,
     order: VecDeque<i64>,
     cap: usize,
 }
@@ -20,12 +21,15 @@ impl PreviewCache {
         Self { map: HashMap::new(), order: VecDeque::new(), cap }
     }
 
-    pub fn get(&self, id: i64) -> Option<Arc<ImageF32>> {
-        self.map.get(&id).cloned()
+    pub fn get(&self, id: i64, path: &str) -> Option<Arc<ImageF32>> {
+        self.map
+            .get(&id)
+            .filter(|(p, _)| p == path)
+            .map(|(_, img)| img.clone())
     }
 
-    pub fn insert(&mut self, id: i64, img: Arc<ImageF32>) {
-        if self.map.insert(id, img).is_none() {
+    pub fn insert(&mut self, id: i64, path: &str, img: Arc<ImageF32>) {
+        if self.map.insert(id, (path.to_string(), img)).is_none() {
             self.order.push_back(id);
         }
         while self.order.len() > self.cap {
@@ -38,11 +42,11 @@ impl PreviewCache {
 
 /// Fetch the linear-light preview base for a photo, decoding on miss.
 pub fn base_for(cache: &Arc<Mutex<PreviewCache>>, id: i64, path: &str) -> Result<Arc<ImageF32>, String> {
-    if let Some(img) = cache.lock().map_err(|_| "cache lock")?.get(id) {
+    if let Some(img) = cache.lock().map_err(|_| "cache lock")?.get(id, path) {
         return Ok(img);
     }
     let img = Arc::new(decode::decode_base(Path::new(path), Some(PREVIEW_MAX)).map_err(|e| e.to_string())?);
-    cache.lock().map_err(|_| "cache lock")?.insert(id, img.clone());
+    cache.lock().map_err(|_| "cache lock")?.insert(id, path, img.clone());
     Ok(img)
 }
 

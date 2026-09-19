@@ -53,11 +53,11 @@ pub fn fix_redeye(img: &mut ImageF32, eyes: &[Spot]) {
 }
 
 /// Heal dust spots and streaks (capsules) by cloning a nearby patch with a
-/// feathered edge. The clone source is chosen by matching the pixel *pattern*
-/// of a sampling ring around the blemish — not just its mean — so edges
-/// continue correctly, and the clone is colour-corrected by the ring mean
-/// difference. When nothing nearby matches (blemish sitting on a contrast
-/// boundary), fall back to inverse-distance interpolation of the ring samples.
+/// feathered edge. Matching works on locally averaged ring signatures with a
+/// noise-aware threshold, so film grain never forces the smooth fallback; and
+/// when the fallback inpaint *is* needed (blemish on a contrast edge), the
+/// donor patch's high-frequency texture is re-added — healed areas keep the
+/// grain structure of the photograph.
 pub fn heal_spots(base: &ImageF32, spots: &[Spot]) -> ImageF32 {
     let mut img = base.clone();
     if spots.is_empty() {
@@ -111,16 +111,52 @@ fn ring_points(seg: [f32; 4], radius: f32) -> Vec<[f32; 2]> {
     pts
 }
 
-fn sample_ring(img: &ImageF32, pts: &[[f32; 2]], off_x: f32, off_y: f32) -> Vec<[f32; 3]> {
-    pts.iter().map(|p| img.sample_bilinear(p[0] + off_x, p[1] + off_y)).collect()
+/// 5-tap local mean and tap spread. The mean is a grain-robust signature for
+/// pattern matching; the spread estimates the local noise (grain) level.
+fn patch_sig(img: &ImageF32, x: f32, y: f32) -> ([f32; 3], f32) {
+    const D: f32 = 1.4;
+    let taps = [
+        img.sample_bilinear(x, y),
+        img.sample_bilinear(x + D, y),
+        img.sample_bilinear(x - D, y),
+        img.sample_bilinear(x, y + D),
+        img.sample_bilinear(x, y - D),
+    ];
+    let mut mean = [0.0f32; 3];
+    for t in &taps {
+        for c in 0..3 {
+            mean[c] += t[c];
+        }
+    }
+    for c in mean.iter_mut() {
+        *c /= taps.len() as f32;
+    }
+    let mut var = 0.0f32;
+    for t in &taps {
+        for c in 0..3 {
+            let d = t[c] - mean[c];
+            var += d * d;
+        }
+    }
+    (mean, var / taps.len() as f32)
 }
 
 fn heal_one(img: &mut ImageF32, src: &ImageF32, seg: [f32; 4], r: f32) {
     let wf = src.width as f32;
     let hf = src.height as f32;
     let ring = ring_points(seg, r * RING_MARGIN);
-    let target = sample_ring(src, &ring, 0.0, 0.0);
+    // grain-robust ring signatures + noise estimate from the tap spread
+    let mut target: Vec<[f32; 3]> = Vec::with_capacity(ring.len());
+    let mut noise_vars: Vec<f32> = Vec::with_capacity(ring.len());
+    for p in &ring {
+        let (m, v) = patch_sig(src, p[0], p[1]);
+        target.push(m);
+        noise_vars.push(v);
+    }
     let n = target.len() as f32;
+    noise_vars.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    // median: robust against the few ring points that straddle a real edge
+    let noise_var = noise_vars[noise_vars.len() / 2];
 
     let mut t_mean = [0.0f32; 3];
     for s in &target {
@@ -168,9 +204,9 @@ fn heal_one(img: &mut ImageF32, src: &ImageF32, seg: [f32; 4], r: f32) {
             if overlaps {
                 continue;
             }
-            let cand = sample_ring(src, &ring, ox, oy);
             let mut ssd = 0.0f32;
-            for (ts, cs) in target.iter().zip(cand.iter()) {
+            for (ts, p) in target.iter().zip(ring.iter()) {
+                let (cs, _) = patch_sig(src, p[0] + ox, p[1] + oy);
                 for c in 0..3 {
                     let d = ts[c] - cs[c];
                     ssd += d * d;
@@ -183,14 +219,16 @@ fn heal_one(img: &mut ImageF32, src: &ImageF32, seg: [f32; 4], r: f32) {
         }
     }
 
-    // accept the clone only if its surroundings really match; otherwise inpaint
+    // texture donor for the inpaint fallback, even when the clone is rejected
+    let tex_off = best.map(|(ox, oy, _)| (ox, oy));
+    // accept the clone when the residual is explainable by grain noise
     let clone = match best {
-        Some((ox, oy, score)) if score <= t_var * 0.6 + 6e-4 => {
-            let cand = sample_ring(src, &ring, ox, oy);
+        Some((ox, oy, score)) if score <= t_var * 0.6 + noise_var * 2.0 + 6e-4 => {
             let mut c_mean = [0.0f32; 3];
-            for s in &cand {
+            for p in &ring {
+                let (m, _) = patch_sig(src, p[0] + ox, p[1] + oy);
                 for c in 0..3 {
-                    c_mean[c] += s[c];
+                    c_mean[c] += m[c];
                 }
             }
             for c in c_mean.iter_mut() {
@@ -228,7 +266,8 @@ fn heal_one(img: &mut ImageF32, src: &ImageF32, seg: [f32; 4], r: f32) {
                     ]
                 }
                 None => {
-                    // inverse-distance interpolation of the clean ring samples
+                    // smooth inpaint from the ring, then re-add donor texture so
+                    // grain survives — never leave a polished patch
                     let mut acc = [0.0f32; 3];
                     let mut wsum = 0.0f32;
                     for (p, s) in ring.iter().zip(target.iter()) {
@@ -240,7 +279,17 @@ fn heal_one(img: &mut ImageF32, src: &ImageF32, seg: [f32; 4], r: f32) {
                             acc[c] += s[c] * w;
                         }
                     }
-                    [acc[0] / wsum, acc[1] / wsum, acc[2] / wsum]
+                    let mut v = [acc[0] / wsum, acc[1] / wsum, acc[2] / wsum];
+                    if let Some((tox, toy)) = tex_off {
+                        let sx = x as f32 + tox;
+                        let sy = y as f32 + toy;
+                        let s = src.sample_bilinear(sx, sy);
+                        let (m, _) = patch_sig(src, sx, sy);
+                        for c in 0..3 {
+                            v[c] = (v[c] + (s[c] - m[c])).max(0.0);
+                        }
+                    }
+                    v
                 }
             };
             let cur = img.px(x, y);

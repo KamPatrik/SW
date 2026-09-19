@@ -39,6 +39,38 @@ kbd {
   color: var(--text-dim);
 }
 
+/* form elements inherit the dark theme everywhere, not only inside modals */
+
+input[type="text"],
+select {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 13px;
+  font-family: inherit;
+}
+
+input[type="text"]:focus,
+select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+select option {
+  background: var(--bg-2);
+  color: var(--text);
+}
+
+input[type="checkbox"] {
+  accent-color: var(--accent);
+}
+
+input[type="text"]::placeholder {
+  color: var(--text-dim);
+}
+
 /* ---------- layout ---------- */
 
 .app-shell {
@@ -254,6 +286,7 @@ kbd {
 
 .dup-controls select {
   font-size: 12px;
+  padding: 4px 6px;
 }
 
 .filter-label {
@@ -807,16 +840,6 @@ input[type="range"]::-webkit-slider-thumb:hover {
   color: var(--text-dim);
 }
 
-.modal input[type="text"],
-.modal select {
-  background: var(--bg);
-  border: 1px solid var(--border);
-  color: var(--text);
-  border-radius: 6px;
-  padding: 6px 8px;
-  font-size: 13px;
-}
-
 .export-log {
   max-height: 140px;
   overflow-y: auto;
@@ -956,13 +979,14 @@ input[type="range"]::-webkit-slider-thumb:hover {
   color: #e66;
 }
 
-.tag-filter,
-.sort-select {
+select.tag-filter,
+select.sort-select {
   font-size: 12px;
   max-width: 110px;
+  padding: 4px 6px;
 }
 
-.search {
+input.search {
   font-size: 12px;
   padding: 4px 8px;
   width: 130px;
@@ -1039,6 +1063,31 @@ input[type="range"]::-webkit-slider-thumb:hover {
   min-height: 36px;
 }
 
+.strip-nav {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 12px 8px;
+  border-top: 1px solid var(--border, #33363e);
+}
+
+.strip-nav input[type="range"] {
+  flex: 1;
+  min-width: 0;
+}
+
+.strip-pos {
+  font-size: 11px;
+  color: var(--text-dim, #9aa);
+  white-space: nowrap;
+  min-width: 90px;
+  text-align: right;
+}
+
+.strip-left {
+  opacity: 0.75;
+}
+
 .fname {
   display: inline-flex;
   align-items: center;
@@ -1060,7 +1109,7 @@ input[type="range"]::-webkit-slider-thumb:hover {
   opacity: 0.7;
 }
 
-.fname-input {
+input.fname-input {
   width: 220px;
   font-size: 12px;
   padding: 3px 6px;
@@ -1156,46 +1205,14 @@ input[type="range"]::-webkit-slider-thumb:hover {
   border-color: #e66;
 }
 
-.preset-row {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-bottom: 4px;
-}
-
-.preset-apply {
+select.preset-select {
   flex: 1;
-  text-align: left;
-  background: var(--bg-2, #22242a);
-  border: 1px solid var(--border, #33363e);
-  border-radius: 4px;
-  color: inherit;
+  min-width: 0;
   font-size: 12px;
-  padding: 5px 8px;
-  cursor: pointer;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  padding: 4px 6px;
 }
 
-.preset-apply:hover {
-  border-color: #667;
-}
-
-.preset-del {
-  background: none;
-  border: none;
-  color: #888;
-  font-size: 14px;
-  cursor: pointer;
-  padding: 2px 6px;
-}
-
-.preset-del:hover {
-  color: #e66;
-}
-
-.preset-name {
+input.preset-name {
   flex: 1;
   min-width: 0;
   font-size: 12px;

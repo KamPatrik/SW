@@ -88,12 +88,16 @@ pub fn list_folders(state: State<'_, AppState>) -> CmdResult<Vec<Folder>> {
 
 #[tauri::command]
 pub fn remove_folder(state: State<'_, AppState>, folder_id: i64) -> CmdResult<()> {
-    state
-        .catalog
-        .lock()
-        .map_err(|_| "catalog lock".to_string())?
-        .remove_folder(folder_id)
-        .map_err(err)
+    let ids = {
+        let cat = state.catalog.lock().map_err(|_| "catalog lock".to_string())?;
+        let ids = cat.photo_ids_in_folder(folder_id).map_err(err)?;
+        cat.remove_folder(folder_id).map_err(err)?;
+        ids
+    };
+    for id in ids {
+        crate::thumbs::remove_thumbs_for(&state.thumbs_dir, id);
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -114,8 +118,13 @@ pub async fn get_thumbnail(state: State<'_, AppState>, photo_id: i64) -> CmdResu
         .map_err(|_| "catalog lock".to_string())?
         .photo_path(photo_id)
         .map_err(err)?;
-    let thumb_path = state.thumbs_dir.join(format!("{photo_id}.jpg"));
+    let thumb_path = crate::thumbs::thumb_path_for(&state.thumbs_dir, photo_id, &path);
+    let dir = state.thumbs_dir.clone();
     let bytes = tauri::async_runtime::spawn_blocking(move || {
+        if !thumb_path.exists() {
+            // drop stale versions from a previous file at this (reused) id
+            crate::thumbs::remove_thumbs_for(&dir, photo_id);
+        }
         crate::thumbs::ensure_thumb(&path, &thumb_path).map_err(err)
     })
     .await
@@ -521,7 +530,7 @@ pub fn remove_photos(state: State<'_, AppState>, ids: Vec<i64>) -> CmdResult<()>
         .remove_photos(&ids)
         .map_err(err)?;
     for id in &ids {
-        let _ = std::fs::remove_file(state.thumbs_dir.join(format!("{id}.jpg")));
+        crate::thumbs::remove_thumbs_for(&state.thumbs_dir, *id);
     }
     Ok(())
 }
@@ -622,7 +631,7 @@ pub async fn find_duplicates(
             photos
                 .par_iter()
                 .filter_map(|p| {
-                    let thumb_path = thumbs_dir.join(format!("{}.jpg", p.id));
+                    let thumb_path = crate::thumbs::thumb_path_for(&thumbs_dir, p.id, &p.path);
                     let res = (|| {
                         let bytes = crate::thumbs::ensure_thumb(&p.path, &thumb_path).ok()?;
                         let gray = image::load_from_memory(&bytes).ok()?.to_luma8();

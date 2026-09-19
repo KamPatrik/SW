@@ -92,25 +92,22 @@ fn flip_v(src: &ImageF32) -> ImageF32 {
     out
 }
 
-/// Straighten by `angle` degrees. The output is auto-cropped to the largest
-/// axis-aligned rectangle that fits inside the rotated image (max area), so
-/// no black corners appear — Lightroom-style constrained rotation.
+/// Straighten by `angle` degrees. The result is auto-cropped to the largest
+/// rectangle with the ORIGINAL aspect ratio that fits inside the rotated
+/// image (Lightroom-style constrained rotation): no black corners and the
+/// photo's aspect ratio is preserved exactly — straightening only zooms in.
 fn rotate_fine(src: &ImageF32, angle_deg: f32) -> ImageF32 {
     let (w, h) = (src.width, src.height);
     let (wf, hf) = (w as f32, h as f32);
     let a = angle_deg.to_radians();
     let (sin_a, cos_a) = (a.sin().abs(), a.cos().abs());
 
-    let (side_long, side_short) = if wf >= hf { (wf, hf) } else { (hf, wf) };
-    let (cw, ch) = if side_short <= 2.0 * sin_a * cos_a * side_long || (sin_a - cos_a).abs() < 1e-5 {
-        let x = 0.5 * side_short;
-        if wf >= hf { (x / sin_a, x / cos_a) } else { (x / cos_a, x / sin_a) }
-    } else {
-        let cos_2a = cos_a * cos_a - sin_a * sin_a;
-        ((wf * cos_a - hf * sin_a) / cos_2a, (hf * cos_a - wf * sin_a) / cos_2a)
-    };
-    let out_w = (cw.floor() as usize).clamp(8, w);
-    let out_h = (ch.floor() as usize).clamp(8, h);
+    // scale k so that k·(W·cos + H·sin) ≤ W and k·(W·sin + H·cos) ≤ H
+    let k = (wf / (wf * cos_a + hf * sin_a))
+        .min(hf / (wf * sin_a + hf * cos_a))
+        .min(1.0);
+    let out_w = ((wf * k).floor() as usize).clamp(8, w);
+    let out_h = ((hf * k).floor() as usize).clamp(8, h);
 
     let mut out = ImageF32::new(out_w, out_h);
     let (s, c) = a.sin_cos();

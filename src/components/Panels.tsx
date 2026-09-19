@@ -34,6 +34,7 @@ export default function Panels({ histogram }: { histogram: HistogramData | null 
   const cropAspect = useStore((s) => s.cropAspect);
   const setCropAspect = useStore((s) => s.setCropAspect);
   const [presetName, setPresetName] = useState("");
+  const [selectedPreset, setSelectedPreset] = useState<number | "">("");
   const [exif, setExif] = useState<ExifInfo | null>(null);
 
   useEffect(() => {
@@ -89,27 +90,41 @@ export default function Panels({ histogram }: { histogram: HistogramData | null 
       <Histogram data={histogram} />
 
       <Section title="Presets">
-        {presets.length === 0 && (
-          <div className="hint">No presets yet — tune a photo, then save its look.</div>
-        )}
-        {presets.map((p) => (
-          <div key={p.id} className="preset-row">
-            <button
-              className="preset-apply"
-              title="Apply preset"
-              onClick={() => void useStore.getState().applyPreset(p.id)}
-            >
-              {p.name}
-            </button>
-            <button
-              className="preset-del"
-              title="Delete preset"
-              onClick={() => void useStore.getState().deletePreset(p.id)}
-            >
-              ×
-            </button>
-          </div>
-        ))}
+        <div className="row">
+          <select
+            className="preset-select"
+            value={presets.some((p) => p.id === selectedPreset) ? selectedPreset : ""}
+            onChange={(e) => {
+              const id = e.target.value === "" ? "" : Number(e.target.value);
+              setSelectedPreset(id);
+              if (id !== "") void useStore.getState().applyPreset(id);
+            }}
+            title="Selecting a preset applies it"
+          >
+            <option value="">
+              {presets.length === 0 ? "No presets yet…" : "— apply preset —"}
+            </option>
+            {presets.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+          <button
+            className="btn small"
+            disabled={!presets.some((p) => p.id === selectedPreset)}
+            title="Delete selected preset"
+            onClick={() => {
+              const p = presets.find((x) => x.id === selectedPreset);
+              if (p && confirm(`Delete preset “${p.name}”?`)) {
+                void useStore.getState().deletePreset(p.id);
+                setSelectedPreset("");
+              }
+            }}
+          >
+            ×
+          </button>
+        </div>
         <div className="row">
           <input
             className="preset-name"

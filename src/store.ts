@@ -147,6 +147,14 @@ function stripPhotoSpecific(r: Recipe): Recipe {
 const thumbQueue: number[] = [];
 const thumbQueued = new Set<number>();
 let thumbInFlight = 0;
+// bumping the generation discards in-flight thumbnail responses after invalidation
+let thumbGen = 0;
+
+function resetThumbs() {
+  thumbGen++;
+  thumbQueue.length = 0;
+  thumbQueued.clear();
+}
 
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
 let pendingSave: { id: number; recipe: Recipe } | null = null;
@@ -168,10 +176,13 @@ export const useStore = create<AppStore>()((set, get) => {
   const pumpThumbs = () => {
     while (thumbInFlight < 3 && thumbQueue.length > 0) {
       const id = thumbQueue.shift()!;
+      const gen = thumbGen;
       thumbInFlight++;
       api
         .getThumbnail(id)
-        .then((url) => set((s) => ({ thumbs: { ...s.thumbs, [id]: url } })))
+        .then((url) => {
+          if (gen === thumbGen) set((s) => ({ thumbs: { ...s.thumbs, [id]: url } }));
+        })
         .catch(() => {})
         .finally(() => {
           thumbInFlight--;
@@ -269,6 +280,9 @@ export const useStore = create<AppStore>()((set, get) => {
     removeFolder: async (id) => {
       await api.removeFolder(id);
       if (get().activeFolderId === id) set({ activeFolderId: null });
+      // ids may be reused by the DB — drop every cached thumbnail
+      resetThumbs();
+      set({ thumbs: {} });
       await get().refreshFolders();
       await get().refreshPhotos();
     },
@@ -485,11 +499,16 @@ export const useStore = create<AppStore>()((set, get) => {
 
     removePhotos: async (ids) => {
       await api.removePhotos(ids);
-      set((s) => ({
-        photos: s.photos.filter((p) => !ids.includes(p.id)),
-        selection: s.selection.filter((i) => !ids.includes(i)),
-        activeId: s.activeId !== null && ids.includes(s.activeId) ? null : s.activeId,
-      }));
+      set((s) => {
+        const thumbs = { ...s.thumbs };
+        for (const id of ids) delete thumbs[id];
+        return {
+          photos: s.photos.filter((p) => !ids.includes(p.id)),
+          selection: s.selection.filter((i) => !ids.includes(i)),
+          activeId: s.activeId !== null && ids.includes(s.activeId) ? null : s.activeId,
+          thumbs,
+        };
+      });
     },
 
     setFilterLabel: (l) => set({ filterLabel: l }),

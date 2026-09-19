@@ -111,6 +111,12 @@ impl Catalog {
         Ok(())
     }
 
+    pub fn photo_ids_in_folder(&self, folder_id: i64) -> Result<Vec<i64>> {
+        let mut stmt = self.conn.prepare("SELECT id FROM photos WHERE folder_id = ?1")?;
+        let rows = stmt.query_map(params![folder_id], |r| r.get(0))?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn insert_photo(
         &self,
