@@ -3,9 +3,61 @@ use std::f32::consts::PI;
 use super::pipeline::Spot;
 use super::ImageF32;
 
-/// Heal dust spots by cloning a nearby patch with a feathered edge.
-/// The source patch direction is chosen automatically: the candidate whose
-/// mean colour best matches the ring just outside the spot wins.
+const RING_SAMPLES: usize = 20;
+const RING_MARGIN: f32 = 1.35;
+
+/// Neutralize red-eye pupils: inside each circle, pixels whose red channel
+/// clearly dominates are pulled to the green/blue average and darkened,
+/// weighted by redness (soft mask) and a radial edge feather.
+pub fn fix_redeye(img: &mut ImageF32, eyes: &[Spot]) {
+    if eyes.is_empty() {
+        return;
+    }
+    let wf = img.width as f32;
+    let hf = img.height as f32;
+    for s in eyes {
+        let r = (s.radius * wf).clamp(2.0, wf.min(hf) * 0.2);
+        let cx = (s.x * wf).clamp(0.0, wf - 1.0);
+        let cy = (s.y * hf).clamp(0.0, hf - 1.0);
+        let x0 = ((cx - r).floor() as i64).max(0) as usize;
+        let x1 = ((cx + r).ceil() as i64).min(img.width as i64 - 1) as usize;
+        let y0 = ((cy - r).floor() as i64).max(0) as usize;
+        let y1 = ((cy + r).ceil() as i64).min(img.height as i64 - 1) as usize;
+        for y in y0..=y1 {
+            for x in x0..=x1 {
+                let dx = x as f32 - cx;
+                let dy = y as f32 - cy;
+                let d = (dx * dx + dy * dy).sqrt();
+                if d >= r {
+                    continue;
+                }
+                let p = img.px(x, y);
+                if p[0] < 0.02 {
+                    continue;
+                }
+                let gb = 0.5 * (p[1] + p[2]);
+                // linear-light redness: ~0.5 for skin tones, >0.8 for flash red-eye
+                let redness = (p[0] - gb) / p[0].max(1e-3);
+                let m = ((redness - 0.55) / 0.25).clamp(0.0, 1.0);
+                if m <= 0.0 {
+                    continue;
+                }
+                let u = ((r - d) / (r * 0.3)).clamp(0.0, 1.0);
+                let t = m * u * u * (3.0 - 2.0 * u);
+                let nr = p[0] + (gb - p[0]) * t;
+                let dark = 1.0 - 0.25 * t;
+                img.set(x, y, [nr * dark, p[1] * dark, p[2] * dark]);
+            }
+        }
+    }
+}
+
+/// Heal dust spots and streaks (capsules) by cloning a nearby patch with a
+/// feathered edge. The clone source is chosen by matching the pixel *pattern*
+/// of a sampling ring around the blemish — not just its mean — so edges
+/// continue correctly, and the clone is colour-corrected by the ring mean
+/// difference. When nothing nearby matches (blemish sitting on a contrast
+/// boundary), fall back to inverse-distance interpolation of the ring samples.
 pub fn heal_spots(base: &ImageF32, spots: &[Spot]) -> ImageF32 {
     let mut img = base.clone();
     if spots.is_empty() {
@@ -17,116 +69,191 @@ pub fn heal_spots(base: &ImageF32, spots: &[Spot]) -> ImageF32 {
 
     for s in spots {
         let r = (s.radius * wf).clamp(2.0, wf.min(hf) * 0.25);
-        let cx = s.x * wf;
-        let cy = s.y * hf;
-        let (ox, oy) = best_source_offset(&src, cx, cy, r);
-
-        let x0 = ((cx - r).floor() as i64).max(0) as usize;
-        let x1 = ((cx + r).ceil() as i64).min(base.width as i64 - 1) as usize;
-        let y0 = ((cy - r).floor() as i64).max(0) as usize;
-        let y1 = ((cy + r).ceil() as i64).min(base.height as i64 - 1) as usize;
-
-        for y in y0..=y1 {
-            for x in x0..=x1 {
-                let dx = x as f32 - cx;
-                let dy = y as f32 - cy;
-                let d = (dx * dx + dy * dy).sqrt();
-                if d >= r {
-                    continue;
-                }
-                let t = if d < r * 0.6 {
-                    1.0
-                } else {
-                    let u = ((r - d) / (r * 0.4)).clamp(0.0, 1.0);
-                    u * u * (3.0 - 2.0 * u)
-                };
-                let sp = src.sample_bilinear(x as f32 + ox, y as f32 + oy);
-                let cur = img.px(x, y);
-                img.set(
-                    x,
-                    y,
-                    [
-                        cur[0] + (sp[0] - cur[0]) * t,
-                        cur[1] + (sp[1] - cur[1]) * t,
-                        cur[2] + (sp[2] - cur[2]) * t,
-                    ],
-                );
-            }
-        }
+        let ax = (s.x * wf).clamp(0.0, wf - 1.0);
+        let ay = (s.y * hf).clamp(0.0, hf - 1.0);
+        let (bx, by) = match (s.x2, s.y2) {
+            (Some(x2), Some(y2)) => ((x2 * wf).clamp(0.0, wf - 1.0), (y2 * hf).clamp(0.0, hf - 1.0)),
+            _ => (ax, ay),
+        };
+        heal_one(&mut img, &src, [ax, ay, bx, by], r);
     }
     img
 }
 
-fn ring_mean(img: &ImageF32, cx: f32, cy: f32, radius: f32) -> [f32; 3] {
-    let mut acc = [0.0f32; 3];
-    let n = 16;
-    for k in 0..n {
-        let a = k as f32 / n as f32 * 2.0 * PI;
-        let p = img.sample_bilinear(cx + radius * a.cos(), cy + radius * a.sin());
-        for c in 0..3 {
-            acc[c] += p[c];
-        }
-    }
-    [acc[0] / n as f32, acc[1] / n as f32, acc[2] / n as f32]
+/// Distance from a point to the segment a–b.
+fn seg_dist(px: f32, py: f32, seg: [f32; 4]) -> f32 {
+    let [ax, ay, bx, by] = seg;
+    let dx = bx - ax;
+    let dy = by - ay;
+    let len2 = dx * dx + dy * dy;
+    let t = if len2 <= 1e-6 {
+        0.0
+    } else {
+        (((px - ax) * dx + (py - ay) * dy) / len2).clamp(0.0, 1.0)
+    };
+    let cx = ax + t * dx;
+    let cy = ay + t * dy;
+    ((px - cx) * (px - cx) + (py - cy) * (py - cy)).sqrt()
 }
 
-fn patch_stats(img: &ImageF32, cx: f32, cy: f32, r: f32) -> ([f32; 3], f32) {
-    let mut samples: Vec<[f32; 3]> = Vec::with_capacity(17);
-    samples.push(img.sample_bilinear(cx, cy));
-    for ring_r in [r * 0.4, r * 0.8] {
+/// Evenly swept points on the hull of the capsule dilated to `radius`.
+fn ring_points(seg: [f32; 4], radius: f32) -> Vec<[f32; 2]> {
+    let [ax, ay, bx, by] = seg;
+    let dx = bx - ax;
+    let dy = by - ay;
+    let mut pts = Vec::with_capacity(RING_SAMPLES);
+    for k in 0..RING_SAMPLES {
+        let a = k as f32 / RING_SAMPLES as f32 * 2.0 * PI;
+        let (ca, sa) = (a.cos(), a.sin());
+        let (anchor_x, anchor_y) = if ca * dx + sa * dy >= 0.0 { (bx, by) } else { (ax, ay) };
+        pts.push([anchor_x + ca * radius, anchor_y + sa * radius]);
+    }
+    pts
+}
+
+fn sample_ring(img: &ImageF32, pts: &[[f32; 2]], off_x: f32, off_y: f32) -> Vec<[f32; 3]> {
+    pts.iter().map(|p| img.sample_bilinear(p[0] + off_x, p[1] + off_y)).collect()
+}
+
+fn heal_one(img: &mut ImageF32, src: &ImageF32, seg: [f32; 4], r: f32) {
+    let wf = src.width as f32;
+    let hf = src.height as f32;
+    let ring = ring_points(seg, r * RING_MARGIN);
+    let target = sample_ring(src, &ring, 0.0, 0.0);
+    let n = target.len() as f32;
+
+    let mut t_mean = [0.0f32; 3];
+    for s in &target {
+        for c in 0..3 {
+            t_mean[c] += s[c];
+        }
+    }
+    for c in t_mean.iter_mut() {
+        *c /= n;
+    }
+    let mut t_var = 0.0f32;
+    for s in &target {
+        for c in 0..3 {
+            let d = s[c] - t_mean[c];
+            t_var += d * d;
+        }
+    }
+    t_var /= n;
+
+    // candidate clone offsets: 8 directions x 2 distances, scored by ring-pattern SSD
+    let mut best: Option<(f32, f32, f32)> = None;
+    for &dist in &[r * 2.6, r * 4.2] {
         for k in 0..8 {
-            let a = k as f32 / 8.0 * 2.0 * PI;
-            samples.push(img.sample_bilinear(cx + ring_r * a.cos(), cy + ring_r * a.sin()));
+            let a = (k as f32 + 0.5) / 8.0 * 2.0 * PI;
+            let ox = dist * a.cos();
+            let oy = dist * a.sin();
+            let m = r * RING_MARGIN + 1.0;
+            let inb = |x: f32, y: f32| {
+                x - m >= 0.0 && y - m >= 0.0 && x + m <= wf - 1.0 && y + m <= hf - 1.0
+            };
+            if !inb(seg[0] + ox, seg[1] + oy) || !inb(seg[2] + ox, seg[3] + oy) {
+                continue;
+            }
+            // the shifted capsule must not overlap the blemish itself
+            let mut overlaps = false;
+            for i in 0..=4 {
+                let t = i as f32 / 4.0;
+                let sx = seg[0] + (seg[2] - seg[0]) * t + ox;
+                let sy = seg[1] + (seg[3] - seg[1]) * t + oy;
+                if seg_dist(sx, sy, seg) < r * 2.2 {
+                    overlaps = true;
+                    break;
+                }
+            }
+            if overlaps {
+                continue;
+            }
+            let cand = sample_ring(src, &ring, ox, oy);
+            let mut ssd = 0.0f32;
+            for (ts, cs) in target.iter().zip(cand.iter()) {
+                for c in 0..3 {
+                    let d = ts[c] - cs[c];
+                    ssd += d * d;
+                }
+            }
+            let score = ssd / n;
+            if best.map(|b| score < b.2).unwrap_or(true) {
+                best = Some((ox, oy, score));
+            }
         }
     }
-    let mut mean = [0.0f32; 3];
-    for s in &samples {
-        for c in 0..3 {
-            mean[c] += s[c];
+
+    // accept the clone only if its surroundings really match; otherwise inpaint
+    let clone = match best {
+        Some((ox, oy, score)) if score <= t_var * 0.6 + 6e-4 => {
+            let cand = sample_ring(src, &ring, ox, oy);
+            let mut c_mean = [0.0f32; 3];
+            for s in &cand {
+                for c in 0..3 {
+                    c_mean[c] += s[c];
+                }
+            }
+            for c in c_mean.iter_mut() {
+                *c /= n;
+            }
+            Some((ox, oy, [t_mean[0] - c_mean[0], t_mean[1] - c_mean[1], t_mean[2] - c_mean[2]]))
+        }
+        _ => None,
+    };
+
+    let x0 = ((seg[0].min(seg[2]) - r).floor() as i64).max(0) as usize;
+    let x1 = ((seg[0].max(seg[2]) + r).ceil() as i64).min(src.width as i64 - 1) as usize;
+    let y0 = ((seg[1].min(seg[3]) - r).floor() as i64).max(0) as usize;
+    let y1 = ((seg[1].max(seg[3]) + r).ceil() as i64).min(src.height as i64 - 1) as usize;
+
+    for y in y0..=y1 {
+        for x in x0..=x1 {
+            let d = seg_dist(x as f32, y as f32, seg);
+            if d >= r {
+                continue;
+            }
+            let t = if d < r * 0.6 {
+                1.0
+            } else {
+                let u = ((r - d) / (r * 0.4)).clamp(0.0, 1.0);
+                u * u * (3.0 - 2.0 * u)
+            };
+            let val = match &clone {
+                Some((ox, oy, delta)) => {
+                    let p = src.sample_bilinear(x as f32 + ox, y as f32 + oy);
+                    [
+                        (p[0] + delta[0]).max(0.0),
+                        (p[1] + delta[1]).max(0.0),
+                        (p[2] + delta[2]).max(0.0),
+                    ]
+                }
+                None => {
+                    // inverse-distance interpolation of the clean ring samples
+                    let mut acc = [0.0f32; 3];
+                    let mut wsum = 0.0f32;
+                    for (p, s) in ring.iter().zip(target.iter()) {
+                        let dx = p[0] - x as f32;
+                        let dy = p[1] - y as f32;
+                        let w = 1.0 / (dx * dx + dy * dy + 1.0);
+                        wsum += w;
+                        for c in 0..3 {
+                            acc[c] += s[c] * w;
+                        }
+                    }
+                    [acc[0] / wsum, acc[1] / wsum, acc[2] / wsum]
+                }
+            };
+            let cur = img.px(x, y);
+            img.set(
+                x,
+                y,
+                [
+                    cur[0] + (val[0] - cur[0]) * t,
+                    cur[1] + (val[1] - cur[1]) * t,
+                    cur[2] + (val[2] - cur[2]) * t,
+                ],
+            );
         }
     }
-    for c in 0..3 {
-        mean[c] /= samples.len() as f32;
-    }
-    let mut var = 0.0;
-    for s in &samples {
-        for c in 0..3 {
-            let d = s[c] - mean[c];
-            var += d * d;
-        }
-    }
-    (mean, var / samples.len() as f32)
 }
 
-fn best_source_offset(img: &ImageF32, cx: f32, cy: f32, r: f32) -> (f32, f32) {
-    let target = ring_mean(img, cx, cy, r * 1.5);
-    let dist = r * 2.6;
-    let mut best = (dist, 0.0f32);
-    let mut best_score = f32::MAX;
-    for k in 0..8 {
-        let a = k as f32 / 8.0 * 2.0 * PI;
-        let ox = dist * a.cos();
-        let oy = dist * a.sin();
-        let px = cx + ox;
-        let py = cy + oy;
-        if px - r < 0.0
-            || py - r < 0.0
-            || px + r > img.width as f32 - 1.0
-            || py + r > img.height as f32 - 1.0
-        {
-            continue;
-        }
-        let (mean, var) = patch_stats(img, px, py, r);
-        let mut diff = 0.0;
-        for c in 0..3 {
-            let d = mean[c] - target[c];
-            diff += d * d;
-        }
-        let score = diff + var * 0.5;
-        if score < best_score {
-            best_score = score;
-            best = (ox, oy);
-        }
-    }
-    best
-}

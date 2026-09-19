@@ -242,6 +242,18 @@ kbd {
   padding: 8px 16px;
   border-bottom: 1px solid var(--border);
   flex: none;
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+
+.dup-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dup-controls select {
+  font-size: 12px;
 }
 
 .filter-label {
@@ -356,6 +368,18 @@ kbd {
   right: 6px;
 }
 
+.badge.dup {
+  left: 6px;
+  top: auto;
+  bottom: 6px;
+  color: #c9a6e8;
+}
+
+.badge.dup.best {
+  color: #f0c33c;
+  font-weight: 600;
+}
+
 .card-foot {
   display: flex;
   align-items: center;
@@ -429,6 +453,8 @@ kbd {
   padding: 12px;
   position: relative;
   background: #0d0e11;
+  overflow: hidden;
+  touch-action: none;
 }
 
 .preview-wrap {
@@ -814,6 +840,366 @@ input[type="range"]::-webkit-slider-thumb:hover {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+/* develop top bar, zoom, grid, streaks, presets, card actions */
+
+.histo-wrap {
+  position: relative;
+}
+
+.clip-ind {
+  position: absolute;
+  top: 4px;
+  font-size: 9px;
+  color: #e66;
+  cursor: default;
+  line-height: 1;
+}
+
+.clip-ind.left {
+  left: 6px;
+}
+
+.clip-ind.right {
+  right: 6px;
+}
+
+.before-label {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  background: rgba(0, 0, 0, 0.65);
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  pointer-events: none;
+}
+
+.label-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex: none;
+  display: inline-block;
+  margin-right: 6px;
+}
+
+.label-filters {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.label-dot-btn {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  padding: 0;
+  opacity: 0.65;
+}
+
+.label-dot-btn:hover {
+  opacity: 1;
+}
+
+.label-dot-btn.on {
+  border-color: #fff;
+  opacity: 1;
+}
+
+.tag-editor {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border, #33363e);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.tag-editor input {
+  font-size: 12px;
+  padding: 4px 6px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.tag-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: var(--bg-2, #22242a);
+  border: 1px solid var(--border, #33363e);
+  border-radius: 10px;
+  padding: 1px 4px 1px 8px;
+  font-size: 11px;
+}
+
+.tag-chip button {
+  background: none;
+  border: none;
+  color: #888;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 3px;
+}
+
+.tag-chip button:hover {
+  color: #e66;
+}
+
+.tag-filter,
+.sort-select {
+  font-size: 12px;
+  max-width: 110px;
+}
+
+.search {
+  font-size: 12px;
+  padding: 4px 8px;
+  width: 130px;
+}
+
+.exif {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.exif-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 11px;
+}
+
+.exif-row span:first-child {
+  color: var(--text-dim, #9aa);
+  flex: none;
+}
+
+.exif-row span:last-child {
+  text-align: right;
+  word-break: break-word;
+}
+
+.aspect-label {
+  font-size: 11px;
+  color: var(--text-dim, #9aa);
+}
+
+.slider-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.slider-row input[type="range"] {
+  flex: 1;
+  min-width: 0;
+}
+
+.slider-step {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-2, #22242a);
+  border: 1px solid var(--border, #33363e);
+  border-radius: 4px;
+  color: var(--text-dim, #9aa);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+
+.slider-step:hover {
+  color: #fff;
+  border-color: #667;
+}
+
+.develop-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border, #33363e);
+  min-height: 36px;
+}
+
+.fname {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fname-edit {
+  opacity: 0;
+  font-size: 11px;
+}
+
+.fname:hover .fname-edit {
+  opacity: 0.7;
+}
+
+.fname-input {
+  width: 220px;
+  font-size: 12px;
+  padding: 3px 6px;
+}
+
+.fname-ext {
+  opacity: 0.6;
+  font-size: 12px;
+}
+
+.zoom-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.zoom-pct {
+  font-size: 11px;
+  opacity: 0.7;
+  min-width: 38px;
+  text-align: right;
+}
+
+.grid-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.grid-line {
+  stroke: rgba(255, 255, 255, 0.25);
+  stroke-width: 1;
+}
+
+.grid-line.strong {
+  stroke: rgba(255, 255, 255, 0.55);
+}
+
+.spot-stroke {
+  stroke: rgba(120, 190, 255, 0.65);
+  fill: none;
+}
+
+.spot-stroke.live {
+  stroke: rgba(120, 255, 170, 0.65);
+}
+
+.redeye-circle {
+  fill: rgba(230, 60, 60, 0.15);
+  stroke: #e05252;
+  stroke-width: 1.5;
+}
+
+.card-actions {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  display: none;
+  gap: 4px;
+}
+
+.card:hover .card-actions {
+  display: flex;
+}
+
+.flagbtn {
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  border: 1px solid var(--border, #33363e);
+  background: rgba(20, 21, 25, 0.85);
+  color: #aaa;
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.flagbtn:hover {
+  color: #fff;
+}
+
+.flagbtn.on {
+  color: #7c6;
+  border-color: #7c6;
+}
+
+.flagbtn.reject.on {
+  color: #e66;
+  border-color: #e66;
+}
+
+.preset-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.preset-apply {
+  flex: 1;
+  text-align: left;
+  background: var(--bg-2, #22242a);
+  border: 1px solid var(--border, #33363e);
+  border-radius: 4px;
+  color: inherit;
+  font-size: 12px;
+  padding: 5px 8px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preset-apply:hover {
+  border-color: #667;
+}
+
+.preset-del {
+  background: none;
+  border: none;
+  color: #888;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 2px 6px;
+}
+
+.preset-del:hover {
+  color: #e66;
+}
+
+.preset-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  padding: 4px 6px;
 }
 
 /* crash screen & error toasts */

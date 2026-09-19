@@ -18,6 +18,13 @@ export interface Photo {
   capturedAt: string | null;
   hasEdits: boolean;
   tags: string[];
+  dupGroup: number | null;
+  dupBest: boolean;
+}
+
+export interface DupResult {
+  groups: number;
+  flagged: number;
 }
 
 export interface NegativeParams {
@@ -39,6 +46,13 @@ export interface Spot {
   x: number;
   y: number;
   radius: number; // relative to image width
+  x2: number | null; // stroke end point; null = circular spot
+  y2: number | null;
+}
+
+export interface Preset {
+  id: number;
+  name: string;
 }
 
 export interface Recipe {
@@ -54,6 +68,10 @@ export interface Recipe {
   vibrance: number;
   saturation: number;
   sharpen: number;
+  clarity: number;
+  noise: number;
+  vignette: number;
+  grain: number;
   toneCurve: [number, number][];
   rotate90: number;
   flipH: boolean;
@@ -61,6 +79,7 @@ export interface Recipe {
   angle: number;
   crop: CropRect | null;
   spots: Spot[];
+  redeye: Spot[];
 }
 
 export interface HistogramData {
@@ -83,7 +102,18 @@ export interface ImportResult {
   total: number;
 }
 
-export type Tool = "none" | "spot" | "crop" | "pickBase";
+export interface ExifInfo {
+  camera: string | null;
+  lens: string | null;
+  iso: string | null;
+  shutter: string | null;
+  aperture: string | null;
+  focal: string | null;
+  captured: string | null;
+  fileSize: number | null;
+}
+
+export type Tool = "none" | "spot" | "crop" | "pickBase" | "pickWb" | "redeye";
 
 export const DEFAULT_RECIPE: Recipe = {
   negative: { enabled: false, filmBase: null, gamma: 1.0, redBalance: 0, blueBalance: 0 },
@@ -98,6 +128,10 @@ export const DEFAULT_RECIPE: Recipe = {
   vibrance: 0,
   saturation: 0,
   sharpen: 0,
+  clarity: 0,
+  noise: 0,
+  vignette: 0,
+  grain: 0,
   toneCurve: [
     [0, 0],
     [1, 1],
@@ -108,6 +142,7 @@ export const DEFAULT_RECIPE: Recipe = {
   angle: 0,
   crop: null,
   spots: [],
+  redeye: [],
 };
 
 export function cloneRecipe(r: Recipe): Recipe {
@@ -117,5 +152,6 @@ export function cloneRecipe(r: Recipe): Recipe {
     toneCurve: r.toneCurve.map((p) => [...p] as [number, number]),
     crop: r.crop ? { ...r.crop } : null,
     spots: r.spots.map((s) => ({ ...s })),
+    redeye: r.redeye.map((s) => ({ ...s })),
   };
 }

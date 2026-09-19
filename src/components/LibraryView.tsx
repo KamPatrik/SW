@@ -1,7 +1,14 @@
-import { useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { filteredPhotos, useStore } from "../store";
 import type { Photo } from "../types";
+
+export const LABEL_COLORS: Record<string, string> = {
+  red: "#d05c50",
+  yellow: "#d0b050",
+  green: "#5fae62",
+  blue: "#5b83c9",
+};
 
 function folderName(path: string): string {
   const parts = path.split(/[\\/]/).filter(Boolean);
@@ -57,8 +64,39 @@ function Thumb({ photo }: { photo: Photo }) {
         {photo.flag === 2 && <span className="badge reject">✕</span>}
         {photo.hasEdits && <span className="badge edited">✎</span>}
         {photo.isRaw && <span className="badge raw">RAW</span>}
+        {photo.dupGroup !== null && (
+          <span
+            className={photo.dupBest ? "badge dup best" : "badge dup"}
+            title={photo.dupBest ? "Best of duplicate group" : `Duplicate group ${photo.dupGroup}`}
+          >
+            {photo.dupBest ? "★ best" : `◈ ${photo.dupGroup}`}
+          </span>
+        )}
+        <span
+          className="card-actions"
+          onClick={(e) => e.stopPropagation()}
+          onDoubleClick={(e) => e.stopPropagation()}
+        >
+          <button
+            className={photo.flag === 1 ? "flagbtn on" : "flagbtn"}
+            title="Pick (P)"
+            onClick={() => void useStore.getState().setFlag([photo.id], photo.flag === 1 ? 0 : 1)}
+          >
+            ⚑
+          </button>
+          <button
+            className={photo.flag === 2 ? "flagbtn on reject" : "flagbtn reject"}
+            title="Reject (X)"
+            onClick={() => void useStore.getState().setFlag([photo.id], photo.flag === 2 ? 0 : 2)}
+          >
+            ✕
+          </button>
+        </span>
       </div>
       <div className="card-foot">
+        {photo.colorLabel && LABEL_COLORS[photo.colorLabel] && (
+          <span className="label-dot" style={{ background: LABEL_COLORS[photo.colorLabel] }} />
+        )}
         <span className="card-name" title={photo.path}>
           {photo.filename}
         </span>
@@ -67,6 +105,53 @@ function Thumb({ photo }: { photo: Photo }) {
           onChange={(n) => void useStore.getState().setRating([photo.id], n)}
         />
       </div>
+    </div>
+  );
+}
+
+function TagEditor() {
+  const active = useStore((s) =>
+    s.activeId === null ? null : s.photos.find((p) => p.id === s.activeId) ?? null,
+  );
+  const [val, setVal] = useState("");
+  if (!active) return null;
+  const add = () => {
+    const v = val.trim();
+    if (!v) return;
+    if (!active.tags.includes(v)) {
+      void useStore.getState().setTags(active.id, [...active.tags, v]);
+    }
+    setVal("");
+  };
+  return (
+    <div className="tag-editor">
+      <div className="sidebar-title">Tags</div>
+      <div className="tag-chips">
+        {active.tags.map((t) => (
+          <span key={t} className="tag-chip">
+            {t}
+            <button
+              title="Remove tag"
+              onClick={() =>
+                void useStore.getState().setTags(
+                  active.id,
+                  active.tags.filter((x) => x !== t),
+                )
+              }
+            >
+              ×
+            </button>
+          </span>
+        ))}
+        {active.tags.length === 0 && <span className="hint">no tags</span>}
+      </div>
+      <input
+        type="text"
+        value={val}
+        placeholder="Add tag ↵"
+        onChange={(e) => setVal(e.target.value)}
+        onKeyDown={(e) => e.key === "Enter" && add()}
+      />
     </div>
   );
 }
@@ -80,6 +165,27 @@ export default function LibraryView() {
   const filterFlag = useStore((s) => s.filterFlag);
   const setFilterRating = useStore((s) => s.setFilterRating);
   const setFilterFlag = useStore((s) => s.setFilterFlag);
+  const filterLabel = useStore((s) => s.filterLabel);
+  const setFilterLabel = useStore((s) => s.setFilterLabel);
+  const filterTag = useStore((s) => s.filterTag);
+  const setFilterTag = useStore((s) => s.setFilterTag);
+  const filterText = useStore((s) => s.filterText);
+  const setFilterText = useStore((s) => s.setFilterText);
+  const sortBy = useStore((s) => s.sortBy);
+  const setSortBy = useStore((s) => s.setSortBy);
+  const sortDir = useStore((s) => s.sortDir);
+  const toggleSortDir = useStore((s) => s.toggleSortDir);
+  const allPhotos = useStore((s) => s.photos);
+  const allTags = useMemo(
+    () => Array.from(new Set(allPhotos.flatMap((p) => p.tags))).sort(),
+    [allPhotos],
+  );
+  const filterDups = useStore((s) => s.filterDups);
+  const setFilterDups = useStore((s) => s.setFilterDups);
+  const dupScan = useStore((s) => s.dupScan);
+  const dupSummary = useStore((s) => s.dupSummary);
+  const anyDups = useStore((s) => s.photos.some((p) => p.dupGroup !== null));
+  const [dupStrict, setDupStrict] = useState("normal");
   // useShallow is required: a plain array-returning selector would create a new
   // reference on every snapshot and send React into an infinite render loop.
   const photos = useStore(useShallow(filteredPhotos));
@@ -118,6 +224,7 @@ export default function LibraryView() {
         {folders.length === 0 && (
           <div className="sidebar-hint">Import a folder to get started.</div>
         )}
+        <TagEditor />
       </aside>
       <main className="library-main">
         <div className="filterbar">
@@ -134,6 +241,98 @@ export default function LibraryView() {
               ✕ Rejected
             </button>
           </div>
+          <span className="label-filters">
+            {Object.entries(LABEL_COLORS).map(([name, color]) => (
+              <button
+                key={name}
+                className={filterLabel === name ? "label-dot-btn on" : "label-dot-btn"}
+                style={{ background: color }}
+                title={`Label: ${name} (${{ red: 6, yellow: 7, green: 8, blue: 9 }[name]})`}
+                onClick={() => setFilterLabel(filterLabel === name ? null : name)}
+              />
+            ))}
+          </span>
+          {allTags.length > 0 && (
+            <select
+              className="tag-filter"
+              value={filterTag ?? ""}
+              onChange={(e) => setFilterTag(e.target.value === "" ? null : e.target.value)}
+            >
+              <option value="">All tags</option>
+              {allTags.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
+          )}
+          <input
+            className="search"
+            type="text"
+            placeholder="Search…"
+            value={filterText}
+            onChange={(e) => setFilterText(e.target.value)}
+          />
+          <select
+            className="sort-select"
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value as "captured" | "name" | "rating")}
+            title="Sort by"
+          >
+            <option value="captured">Date</option>
+            <option value="name">Name</option>
+            <option value="rating">Rating</option>
+          </select>
+          <button className="chip" onClick={toggleSortDir} title="Sort direction">
+            {sortDir === 1 ? "↑" : "↓"}
+          </button>
+          <span className="dup-controls">
+            <select
+              value={dupStrict}
+              onChange={(e) => setDupStrict(e.target.value)}
+              title="Duplicate matching strictness"
+            >
+              <option value="strict">Strict</option>
+              <option value="normal">Normal</option>
+              <option value="loose">Loose</option>
+            </select>
+            <button
+              className="btn small"
+              disabled={dupScan !== null || total === 0}
+              onClick={() => void useStore.getState().findDuplicates(dupStrict)}
+              title="Scan the current view for visually near-identical photos"
+            >
+              {dupScan ? `Scanning ${dupScan.done}/${dupScan.total}…` : "Find duplicates"}
+            </button>
+            {(anyDups || dupSummary) && (
+              <>
+                <button
+                  className={filterDups ? "chip on" : "chip"}
+                  onClick={() => setFilterDups(!filterDups)}
+                >
+                  ◈ Duplicates{dupSummary ? ` · ${dupSummary}` : ""}
+                </button>
+                {filterDups && anyDups && (
+                  <button
+                    className="btn small"
+                    title="Flag every non-best duplicate as rejected"
+                    onClick={() => void useStore.getState().rejectNonBest()}
+                  >
+                    ✕ Reject non-best
+                  </button>
+                )}
+                {anyDups && (
+                  <button
+                    className="btn small"
+                    title="Forget duplicate groups in this view"
+                    onClick={() => void useStore.getState().clearDuplicates()}
+                  >
+                    Clear
+                  </button>
+                )}
+              </>
+            )}
+          </span>
           <span className="filter-count">
             {photos.length} / {total}
           </span>
@@ -143,8 +342,9 @@ export default function LibraryView() {
             <p>No photos here yet.</p>
             <p className="empty-hint">
               Use <b>Import folder</b> to add RAW files, scans or JPEGs. Rate with{" "}
-              <kbd>1–5</kbd>, flag with <kbd>P</kbd>/<kbd>X</kbd>, open Develop with{" "}
-              <kbd>D</kbd>.
+              <kbd>1–5</kbd>, flag with <kbd>P</kbd>/<kbd>X</kbd>, colour labels{" "}
+              <kbd>6–9</kbd>, open Develop with <kbd>D</kbd>. <kbd>Del</kbd> removes from
+              catalog, <kbd>Ctrl+Shift+C/V</kbd> copies &amp; pastes settings.
             </p>
           </div>
         ) : (

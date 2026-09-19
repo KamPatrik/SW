@@ -1,5 +1,7 @@
+import { useEffect, useState } from "react";
+import * as api from "../api";
 import { useStore } from "../store";
-import type { HistogramData } from "../types";
+import type { ExifInfo, HistogramData } from "../types";
 import CurveEditor from "./CurveEditor";
 import Histogram from "./Histogram";
 import Slider from "./Slider";
@@ -26,6 +28,56 @@ export default function Panels({ histogram }: { histogram: HistogramData | null 
   const setTool = useStore((s) => s.setTool);
   const spotRadius = useStore((s) => s.spotRadius);
   const setSpotRadius = useStore((s) => s.setSpotRadius);
+  const presets = useStore((s) => s.presets);
+  const setGridVisible = useStore((s) => s.setGridVisible);
+  const activeId = useStore((s) => s.activeId);
+  const cropAspect = useStore((s) => s.cropAspect);
+  const setCropAspect = useStore((s) => s.setCropAspect);
+  const [presetName, setPresetName] = useState("");
+  const [exif, setExif] = useState<ExifInfo | null>(null);
+
+  useEffect(() => {
+    void useStore.getState().refreshPresets();
+  }, []);
+
+  useEffect(() => {
+    setExif(null);
+    if (activeId !== null) {
+      api.getExif(activeId).then(setExif).catch(() => setExif(null));
+    }
+  }, [activeId]);
+
+  const savePreset = () => {
+    const n = presetName.trim();
+    if (!n) return;
+    void useStore.getState().saveCurrentAsPreset(n);
+    setPresetName("");
+  };
+
+  const autoTone = () => {
+    if (!histogram) return;
+    const bins = histogram.l;
+    const total = bins.reduce((a, b) => a + b, 0);
+    if (!total) return;
+    const pct = (p: number) => {
+      let acc = 0;
+      for (let i = 0; i < bins.length; i++) {
+        acc += bins[i];
+        if (acc >= total * p) return i / (bins.length - 1);
+      }
+      return 1;
+    };
+    const p1 = pct(0.01);
+    const p50 = pct(0.5);
+    const p99 = pct(0.995);
+    const medLin = Math.pow(Math.max(0.001, p50), 2.2);
+    const expDelta = Math.max(-1.5, Math.min(1.5, Math.log2(0.18 / medLin) * 0.6));
+    updateRecipe({
+      exposure: Number(Math.max(-5, Math.min(5, recipe.exposure + expDelta)).toFixed(2)),
+      whites: Math.round(Math.max(-100, Math.min(100, recipe.whites + (0.98 - p99) * 285))),
+      blacks: Math.round(Math.max(-100, Math.min(100, recipe.blacks + (0.02 - p1) * 285))),
+    });
+  };
 
   const neg = recipe.negative;
   const baseSwatch = neg.filmBase
@@ -36,12 +88,64 @@ export default function Panels({ histogram }: { histogram: HistogramData | null 
     <div className="panels">
       <Histogram data={histogram} />
 
+      <Section title="Presets">
+        {presets.length === 0 && (
+          <div className="hint">No presets yet — tune a photo, then save its look.</div>
+        )}
+        {presets.map((p) => (
+          <div key={p.id} className="preset-row">
+            <button
+              className="preset-apply"
+              title="Apply preset"
+              onClick={() => void useStore.getState().applyPreset(p.id)}
+            >
+              {p.name}
+            </button>
+            <button
+              className="preset-del"
+              title="Delete preset"
+              onClick={() => void useStore.getState().deletePreset(p.id)}
+            >
+              ×
+            </button>
+          </div>
+        ))}
+        <div className="row">
+          <input
+            className="preset-name"
+            type="text"
+            placeholder="Preset name…"
+            value={presetName}
+            onChange={(e) => setPresetName(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && savePreset()}
+          />
+          <button className="btn small" disabled={!presetName.trim()} onClick={savePreset}>
+            Save
+          </button>
+        </div>
+        <div className="hint">Stores tone, colour &amp; negative settings (not crop/spots)</div>
+      </Section>
+
       <Section title="White balance">
+        <div className="row">
+          <button
+            className={tool === "pickWb" ? "btn small on" : "btn small"}
+            onClick={() => setTool("pickWb")}
+            title="Click a neutral grey area in the image"
+          >
+            💧 Eyedropper
+          </button>
+        </div>
         <Slider label="Temp" value={recipe.wbTemp} min={-100} max={100} onChange={(v) => updateRecipe({ wbTemp: v })} />
         <Slider label="Tint" value={recipe.wbTint} min={-100} max={100} onChange={(v) => updateRecipe({ wbTint: v })} />
       </Section>
 
       <Section title="Tone">
+        <div className="row">
+          <button className="btn small" disabled={!histogram} onClick={autoTone} title="Auto exposure / whites / blacks">
+            Auto
+          </button>
+        </div>
         <Slider
           label="Exposure"
           value={recipe.exposure}
@@ -61,7 +165,14 @@ export default function Panels({ histogram }: { histogram: HistogramData | null 
       <Section title="Presence">
         <Slider label="Vibrance" value={recipe.vibrance} min={-100} max={100} onChange={(v) => updateRecipe({ vibrance: v })} />
         <Slider label="Saturation" value={recipe.saturation} min={-100} max={100} onChange={(v) => updateRecipe({ saturation: v })} />
+        <Slider label="Clarity" value={recipe.clarity} min={-100} max={100} onChange={(v) => updateRecipe({ clarity: v })} />
         <Slider label="Sharpen" value={recipe.sharpen} min={0} max={100} onChange={(v) => updateRecipe({ sharpen: v })} />
+        <Slider label="Noise reduction" value={recipe.noise} min={0} max={100} onChange={(v) => updateRecipe({ noise: v })} />
+      </Section>
+
+      <Section title="Effects">
+        <Slider label="Vignette" value={recipe.vignette} min={-100} max={100} onChange={(v) => updateRecipe({ vignette: v })} />
+        <Slider label="Grain" value={recipe.grain} min={0} max={100} onChange={(v) => updateRecipe({ grain: v })} />
       </Section>
 
       <Section title="Tone curve">
@@ -137,7 +248,28 @@ export default function Panels({ histogram }: { histogram: HistogramData | null 
           onChange={(v) => setSpotRadius(v / 1000)}
           format={(v) => (v / 10).toFixed(1) + "%"}
         />
-        <div className="hint">Click a dust spot to heal it · click again to remove</div>
+        <div className="hint">Click to heal a spot · drag to heal a streak · click a mark to remove it</div>
+      </Section>
+
+      <Section title="Red eye">
+        <div className="row">
+          <button
+            className={tool === "redeye" ? "btn small on" : "btn small"}
+            onClick={() => setTool("redeye")}
+          >
+            {tool === "redeye" ? "Red eye: ON" : "Red eye tool"}
+          </button>
+          <button
+            className="btn small"
+            disabled={recipe.redeye.length === 0}
+            onClick={() => updateRecipe({ redeye: [] })}
+          >
+            Clear ({recipe.redeye.length})
+          </button>
+        </div>
+        <div className="hint">
+          Click each red pupil · circle size follows Spot size · click a mark to remove
+        </div>
       </Section>
 
       <Section title="Geometry">
@@ -163,6 +295,7 @@ export default function Panels({ histogram }: { histogram: HistogramData | null 
           step={0.1}
           onChange={(v) => updateRecipe({ angle: v })}
           format={(v) => v.toFixed(1) + "°"}
+          onDragChange={(d) => setGridVisible(d)}
         />
         <div className="row">
           <button className={tool === "crop" ? "btn small on" : "btn small"} onClick={() => setTool("crop")}>
@@ -172,6 +305,38 @@ export default function Panels({ histogram }: { histogram: HistogramData | null 
             Reset crop
           </button>
         </div>
+        <div className="row">
+          <label className="aspect-label">Aspect</label>
+          <select value={cropAspect} onChange={(e) => setCropAspect(e.target.value)}>
+            <option value="free">Free</option>
+            <option value="original">Original</option>
+            <option value="1:1">1 : 1</option>
+            <option value="3:2">3 : 2</option>
+            <option value="2:3">2 : 3</option>
+            <option value="4:3">4 : 3</option>
+            <option value="3:4">3 : 4</option>
+            <option value="16:9">16 : 9</option>
+          </select>
+        </div>
+      </Section>
+
+      <Section title="Info">
+        {exif ? (
+          <div className="exif">
+            {exif.camera && <div className="exif-row"><span>Camera</span><span>{exif.camera}</span></div>}
+            {exif.lens && <div className="exif-row"><span>Lens</span><span>{exif.lens}</span></div>}
+            {exif.iso && <div className="exif-row"><span>ISO</span><span>{exif.iso}</span></div>}
+            {exif.shutter && <div className="exif-row"><span>Shutter</span><span>{exif.shutter}</span></div>}
+            {exif.aperture && <div className="exif-row"><span>Aperture</span><span>{exif.aperture}</span></div>}
+            {exif.focal && <div className="exif-row"><span>Focal</span><span>{exif.focal}</span></div>}
+            {exif.captured && <div className="exif-row"><span>Captured</span><span>{exif.captured}</span></div>}
+            {exif.fileSize != null && (
+              <div className="exif-row"><span>File</span><span>{(exif.fileSize / 1048576).toFixed(1)} MB</span></div>
+            )}
+          </div>
+        ) : (
+          <div className="hint">No metadata</div>
+        )}
       </Section>
 
       <button className="btn danger reset-all" onClick={() => resetRecipe()}>

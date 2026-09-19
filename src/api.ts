@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Folder, ImportResult, Photo, Recipe, RenderResult } from "./types";
+import type { DupResult, ExifInfo, Folder, ImportResult, Photo, Preset, Recipe, RenderResult } from "./types";
 
 export const importFolder = (path: string) => invoke<ImportResult>("import_folder", { path });
 
@@ -23,6 +23,15 @@ export const sampleBaseColor = (
   ignoreCrop: boolean,
 ) =>
   invoke<[number, number, number]>("sample_base_color", { photoId, x, y, recipe, ignoreCrop });
+
+export const sampleWbColor = (
+  photoId: number,
+  x: number,
+  y: number,
+  recipe: Recipe,
+  ignoreCrop: boolean,
+) =>
+  invoke<[number, number, number]>("sample_wb_color", { photoId, x, y, recipe, ignoreCrop });
 
 export const setRating = (photoId: number, rating: number) =>
   invoke<void>("set_rating", { photoId, rating });
@@ -48,3 +57,26 @@ export const exportPhoto = (
   quality?: number,
   maxSize?: number,
 ) => invoke<string>("export_photo", { photoId, destDir, format, quality, maxSize });
+
+export const renamePhoto = (photoId: number, newStem: string) =>
+  invoke<{ path: string; filename: string }>("rename_photo", { photoId, newStem });
+
+export const listPresets = () => invoke<Preset[]>("list_presets");
+
+export const savePreset = (name: string, recipe: Recipe) =>
+  invoke<number>("save_preset", { name, recipe });
+
+export const deletePreset = (presetId: number) => invoke<void>("delete_preset", { presetId });
+
+export const getPreset = (presetId: number) =>
+  invoke<Recipe | null>("get_preset", { presetId });
+
+export const getExif = (photoId: number) => invoke<ExifInfo>("get_exif", { photoId });
+
+export const removePhotos = (ids: number[]) => invoke<void>("remove_photos", { ids });
+
+export const findDuplicates = (folderId: number | null, strictness: string) =>
+  invoke<DupResult>("find_duplicates", { folderId, strictness });
+
+export const clearDuplicates = (folderId: number | null) =>
+  invoke<void>("clear_duplicates", { folderId });

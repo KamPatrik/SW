@@ -21,7 +21,38 @@ export default function App() {
         return;
       }
       const s = useStore.getState();
+      if (e.ctrlKey || e.metaKey) {
+        if (e.key === "z" || e.key === "Z") {
+          s.undo();
+          e.preventDefault();
+        } else if (e.shiftKey && (e.key === "c" || e.key === "C")) {
+          s.copySettings();
+          e.preventDefault();
+        } else if (e.shiftKey && (e.key === "v" || e.key === "V")) {
+          void s.pasteSettings();
+          e.preventDefault();
+        }
+        return;
+      }
+      if (e.key === "\\") {
+        if (s.view === "develop") s.setShowBefore(true);
+        e.preventDefault();
+        return;
+      }
       const targets = s.selection.length > 0 ? s.selection : s.activeId !== null ? [s.activeId] : [];
+      const labels: Record<string, string> = { "6": "red", "7": "yellow", "8": "green", "9": "blue" };
+      if (labels[e.key] && targets.length) {
+        const cur = s.photos.find((p) => p.id === targets[0])?.colorLabel ?? null;
+        const next = cur === labels[e.key] ? null : labels[e.key];
+        void s.setColorLabel(targets, next);
+        return;
+      }
+      if (e.key === "Delete" && s.view === "library" && targets.length) {
+        if (confirm(`Remove ${targets.length} photo(s) from the catalog? Files stay on disk.`)) {
+          void s.removePhotos(targets);
+        }
+        return;
+      }
       switch (e.key) {
         case "g":
         case "G":
@@ -62,7 +93,14 @@ export default function App() {
       }
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.key === "\\") useStore.getState().setShowBefore(false);
+    };
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keyup", onKeyUp);
+    };
   }, []);
 
   return (

@@ -4,6 +4,11 @@ use super::pipeline::{CropRect, Recipe};
 use super::ImageF32;
 
 pub fn apply(img: ImageF32, r: &Recipe, ignore_crop: bool) -> ImageF32 {
+    apply_crop(apply_orient(img, r), r, ignore_crop)
+}
+
+/// Rotation, flips and straighten — everything except the crop.
+pub fn apply_orient(img: ImageF32, r: &Recipe) -> ImageF32 {
     let mut im = img;
     match r.rotate90 % 4 {
         1 => im = rotate90(&im),
@@ -20,9 +25,13 @@ pub fn apply(img: ImageF32, r: &Recipe, ignore_crop: bool) -> ImageF32 {
     if r.angle.abs() > 0.02 {
         im = rotate_fine(&im, r.angle);
     }
+    im
+}
+
+pub fn apply_crop(im: ImageF32, r: &Recipe, ignore_crop: bool) -> ImageF32 {
     if !ignore_crop {
         if let Some(c) = &r.crop {
-            im = crop(&im, c);
+            return crop(&im, c);
         }
     }
     im
@@ -83,27 +92,43 @@ fn flip_v(src: &ImageF32) -> ImageF32 {
     out
 }
 
-/// Straighten by `angle` degrees; canvas size is kept, corners fill with black.
+/// Straighten by `angle` degrees. The output is auto-cropped to the largest
+/// axis-aligned rectangle that fits inside the rotated image (max area), so
+/// no black corners appear — Lightroom-style constrained rotation.
 fn rotate_fine(src: &ImageF32, angle_deg: f32) -> ImageF32 {
     let (w, h) = (src.width, src.height);
-    let mut out = ImageF32::new(w, h);
+    let (wf, hf) = (w as f32, h as f32);
     let a = angle_deg.to_radians();
+    let (sin_a, cos_a) = (a.sin().abs(), a.cos().abs());
+
+    let (side_long, side_short) = if wf >= hf { (wf, hf) } else { (hf, wf) };
+    let (cw, ch) = if side_short <= 2.0 * sin_a * cos_a * side_long || (sin_a - cos_a).abs() < 1e-5 {
+        let x = 0.5 * side_short;
+        if wf >= hf { (x / sin_a, x / cos_a) } else { (x / cos_a, x / sin_a) }
+    } else {
+        let cos_2a = cos_a * cos_a - sin_a * sin_a;
+        ((wf * cos_a - hf * sin_a) / cos_2a, (hf * cos_a - wf * sin_a) / cos_2a)
+    };
+    let out_w = (cw.floor() as usize).clamp(8, w);
+    let out_h = (ch.floor() as usize).clamp(8, h);
+
+    let mut out = ImageF32::new(out_w, out_h);
     let (s, c) = a.sin_cos();
-    let cx = (w as f32 - 1.0) / 2.0;
-    let cy = (h as f32 - 1.0) / 2.0;
-    out.data.par_chunks_mut(w * 3).enumerate().for_each(|(y, row)| {
-        let fy = y as f32 - cy;
+    let cx = (wf - 1.0) / 2.0;
+    let cy = (hf - 1.0) / 2.0;
+    let ox = (out_w as f32 - 1.0) / 2.0;
+    let oy = (out_h as f32 - 1.0) / 2.0;
+    out.data.par_chunks_mut(out_w * 3).enumerate().for_each(|(y, row)| {
+        let fy = y as f32 - oy;
         for (x, px) in row.chunks_exact_mut(3).enumerate() {
-            let fx = x as f32 - cx;
-            // inverse rotation
+            let fx = x as f32 - ox;
+            // inverse rotation around the source centre
             let sx = c * fx + s * fy + cx;
             let sy = -s * fx + c * fy + cy;
-            if sx >= 0.0 && sy >= 0.0 && sx <= (w - 1) as f32 && sy <= (h - 1) as f32 {
-                let p = src.sample_bilinear(sx, sy);
-                px[0] = p[0];
-                px[1] = p[1];
-                px[2] = p[2];
-            }
+            let p = src.sample_bilinear(sx, sy);
+            px[0] = p[0];
+            px[1] = p[1];
+            px[2] = p[2];
         }
     });
     out

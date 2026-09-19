@@ -9,12 +9,14 @@ a native Rust engine, everything local, no account, no subscription.
 
 ## Features (MVP)
 
-- **Library** — import folders, SQLite catalog, ratings (1–5), pick/reject flags, tags, filters
-- **Non-destructive develop** — edits are stored as a JSON "recipe" in the catalog; originals are never touched
+- **Library** — import folders, SQLite catalog, ratings (1–5), pick/reject flags, colour
+  labels (6–9), tags, text search, sorting, filters
+- **Non-destructive develop** — edits are stored as a JSON "recipe" in the catalog; originals are never touched; undo (Ctrl+Z), before/after (`\`)
 - **RAW support** — CR2/CR3, NEF, ARW, DNG, RAF, ORF, RW2 and more via [rawler](https://github.com/dnglab/dnglab) (pure Rust)
-- **Editing** — white balance, exposure, contrast, highlights/shadows, whites/blacks, vibrance/saturation, sharpening, parametric tone curve, crop/rotate/flip/straighten
+- **Editing** — white balance (sliders + eyedropper), exposure, contrast, highlights/shadows, whites/blacks, auto tone, vibrance/saturation, clarity, sharpening, noise reduction, vignette, film grain, parametric tone curve, crop with aspect ratios, rotate/flip/straighten with auto-crop and alignment grid, zoom & pan
 - **Negative → positive** — density-based inversion (log space) with automatic film-base detection or manual eyedropper, per-channel range normalization, red/blue balance trim — works for C-41 colour and B&W negatives, both scanner TIFFs and DSLR "camera scans" (RAW)
-- **Dust removal** — click-to-heal spots: feathered clone with automatic source-patch selection
+- **Dust removal** — heal spots and drag streaks: pattern-matched clone with colour correction, edge-aware fallback for blemishes on contrast boundaries
+- **Roll workflow** — presets + copy/paste settings across a selection (Ctrl+Shift+C/V), incl. shared film base
 - **Export** — JPEG/PNG with quality and max-size options
 - **100 % local** — no telemetry, no cloud
 

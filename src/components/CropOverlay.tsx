@@ -8,9 +8,11 @@ const MIN = 0.05;
 export default function CropOverlay({
   crop,
   onChange,
+  ratioFactor,
 }: {
   crop: CropRect | null;
   onChange: (c: CropRect) => void;
+  ratioFactor?: number | null; // hNorm = wNorm * ratioFactor; null = free
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const drag = useRef<{ handle: Handle; startX: number; startY: number; start: CropRect } | null>(null);
@@ -54,6 +56,39 @@ export default function CropOverlay({
       }
       if (d.handle.includes("s")) {
         h = clamp(s.h + dy, MIN, 1 - s.y);
+      }
+      const f = ratioFactor ?? null;
+      if (f !== null && f > 0) {
+        if (d.handle === "n" || d.handle === "s") {
+          w = h / f;
+        } else {
+          h = w * f;
+        }
+        if (d.handle.includes("n")) y = s.y + s.h - h;
+        if (d.handle.includes("w")) x = s.x + s.w - w;
+        // keep the locked rect inside the image
+        if (x < 0) {
+          w += x;
+          x = 0;
+          h = w * f;
+          if (d.handle.includes("n")) y = s.y + s.h - h;
+        }
+        if (y < 0) {
+          h += y;
+          y = 0;
+          w = h / f;
+          if (d.handle.includes("w")) x = s.x + s.w - w;
+        }
+        if (x + w > 1) {
+          w = 1 - x;
+          h = w * f;
+          if (d.handle.includes("n")) y = s.y + s.h - h;
+        }
+        if (y + h > 1) {
+          h = 1 - y;
+          w = h / f;
+          if (d.handle.includes("w")) x = s.x + s.w - w;
+        }
       }
     }
     onChange({ x, y, w, h });

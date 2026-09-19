@@ -64,6 +64,16 @@ pub fn run() {
             commands::save_edits,
             commands::get_edits,
             commands::export_photo,
+            commands::rename_photo,
+            commands::list_presets,
+            commands::save_preset,
+            commands::delete_preset,
+            commands::get_preset,
+            commands::sample_wb_color,
+            commands::get_exif,
+            commands::remove_photos,
+            commands::find_duplicates,
+            commands::clear_duplicates,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Revela");

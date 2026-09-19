@@ -45,5 +45,28 @@ export default function Histogram({ data }: { data: HistogramData | null }) {
     ctx.globalCompositeOperation = "source-over";
   }, [data]);
 
-  return <canvas className="histogram" ref={ref} width={W} height={H} />;
+  let clipShadow = false;
+  let clipHighlight = false;
+  if (data) {
+    const total = data.l.reduce((a, b) => a + b, 0) || 1;
+    const last = data.r.length - 1;
+    clipShadow = (data.r[0] + data.g[0] + data.b[0]) / (3 * total) > 0.0008;
+    clipHighlight = (data.r[last] + data.g[last] + data.b[last]) / (3 * total) > 0.0008;
+  }
+
+  return (
+    <div className="histo-wrap">
+      <canvas className="histogram" ref={ref} width={W} height={H} />
+      {clipShadow && (
+        <span className="clip-ind left" title="Shadow clipping">
+          ▲
+        </span>
+      )}
+      {clipHighlight && (
+        <span className="clip-ind right" title="Highlight clipping">
+          ▲
+        </span>
+      )}
+    </div>
+  );
 }

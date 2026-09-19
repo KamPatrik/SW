@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize)]
@@ -9,6 +9,13 @@ use serde::Serialize;
 pub struct Folder {
     pub id: i64,
     pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Preset {
+    pub id: i64,
+    pub name: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -28,6 +35,8 @@ pub struct Photo {
     pub captured_at: Option<String>,
     pub has_edits: bool,
     pub tags: Vec<String>,
+    pub dup_group: Option<i64>,
+    pub dup_best: bool,
 }
 
 pub struct Catalog {
@@ -69,8 +78,16 @@ impl Catalog {
                 photo_id INTEGER NOT NULL REFERENCES photos(id) ON DELETE CASCADE,
                 tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
                 PRIMARY KEY(photo_id, tag_id)
+            );
+            CREATE TABLE IF NOT EXISTS presets(
+                id INTEGER PRIMARY KEY,
+                name TEXT UNIQUE NOT NULL,
+                recipe TEXT NOT NULL
             );",
         )?;
+        // additive migrations; errors mean the column already exists
+        let _ = conn.execute("ALTER TABLE photos ADD COLUMN dup_group INTEGER", []);
+        let _ = conn.execute("ALTER TABLE photos ADD COLUMN dup_best INTEGER NOT NULL DEFAULT 0", []);
         Ok(Self { conn })
     }
 
@@ -135,7 +152,8 @@ impl Catalog {
                     (p.edits IS NOT NULL) AS has_edits,
                     (SELECT group_concat(t.name, char(31))
                        FROM photo_tags pt JOIN tags t ON t.id = pt.tag_id
-                      WHERE pt.photo_id = p.id) AS tag_list
+                      WHERE pt.photo_id = p.id) AS tag_list,
+                    p.dup_group, p.dup_best
                FROM photos p
               WHERE (?1 IS NULL OR p.folder_id = ?1)
               ORDER BY p.captured_at IS NULL, p.captured_at, p.filename",
@@ -159,6 +177,8 @@ impl Catalog {
                 tags: tag_list
                     .map(|s| s.split('\u{1f}').map(|t| t.to_string()).collect())
                     .unwrap_or_default(),
+                dup_group: r.get(14)?,
+                dup_best: r.get(15)?,
             })
         })?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
@@ -225,5 +245,67 @@ impl Catalog {
             )?;
         }
         Ok(())
+    }
+
+    pub fn rename_photo(&self, id: i64, new_path: &str, new_filename: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE photos SET path = ?2, filename = ?3 WHERE id = ?1",
+            params![id, new_path, new_filename],
+        )?;
+        Ok(())
+    }
+
+    pub fn remove_photos(&self, ids: &[i64]) -> Result<()> {
+        for id in ids {
+            self.conn.execute("DELETE FROM photos WHERE id = ?1", params![id])?;
+        }
+        Ok(())
+    }
+
+    pub fn clear_dups(&self, folder_id: Option<i64>) -> Result<()> {
+        self.conn.execute(
+            "UPDATE photos SET dup_group = NULL, dup_best = 0
+              WHERE (?1 IS NULL OR folder_id = ?1)",
+            params![folder_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_dup(&self, id: i64, group: i64, best: bool) -> Result<()> {
+        self.conn.execute(
+            "UPDATE photos SET dup_group = ?2, dup_best = ?3 WHERE id = ?1",
+            params![id, group, best],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_presets(&self) -> Result<Vec<Preset>> {
+        let mut stmt = self.conn.prepare("SELECT id, name FROM presets ORDER BY name")?;
+        let rows = stmt.query_map([], |r| Ok(Preset { id: r.get(0)?, name: r.get(1)? }))?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+
+    pub fn save_preset(&self, name: &str, recipe_json: &str) -> Result<i64> {
+        self.conn.execute(
+            "INSERT INTO presets(name, recipe) VALUES (?1, ?2)
+             ON CONFLICT(name) DO UPDATE SET recipe = excluded.recipe",
+            params![name, recipe_json],
+        )?;
+        let id = self
+            .conn
+            .query_row("SELECT id FROM presets WHERE name = ?1", params![name], |r| r.get(0))?;
+        Ok(id)
+    }
+
+    pub fn delete_preset(&self, id: i64) -> Result<()> {
+        self.conn.execute("DELETE FROM presets WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
+    pub fn get_preset(&self, id: i64) -> Result<Option<String>> {
+        Ok(self
+            .conn
+            .query_row("SELECT recipe FROM presets WHERE id = ?1", params![id], |r| r.get(0))
+            .optional()?)
     }
 }
