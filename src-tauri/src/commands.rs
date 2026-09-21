@@ -1,14 +1,14 @@
 use std::path::{Path, PathBuf};
 
 use base64::Engine as _;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{Emitter, State};
 use walkdir::WalkDir;
 
-use crate::catalog::{Folder, Photo, Preset};
-use crate::engine::pipeline::{apply_recipe, Recipe};
+use crate::catalog::{Folder, NewPhoto, Photo, Preset};
+use crate::engine::pipeline::{apply_recipe, apply_tone, prepare_stage, Recipe};
 use crate::engine::{decode, export, histogram};
-use crate::state::{base_for, AppState};
+use crate::state::{base_for, AppState, StageEntry};
 
 type CmdResult<T> = Result<T, String>;
 
@@ -27,9 +27,14 @@ pub struct ImportResult {
 }
 
 #[tauri::command]
-pub async fn import_folder(state: State<'_, AppState>, path: String) -> CmdResult<ImportResult> {
+pub async fn import_folder(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    path: String,
+) -> CmdResult<ImportResult> {
     let catalog = state.catalog.clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    let res = tauri::async_runtime::spawn_blocking(move || {
+        use rayon::prelude::*;
         let files: Vec<PathBuf> = WalkDir::new(&path)
             .max_depth(10)
             .follow_links(false)
@@ -44,36 +49,70 @@ pub async fn import_folder(state: State<'_, AppState>, path: String) -> CmdResul
             })
             .collect();
 
+        // metadata probing is I/O + parse heavy — do it in parallel
+        let items: Vec<NewPhoto> = files
+            .par_iter()
+            .map(|file| {
+                let ext = file
+                    .extension()
+                    .map(|x| x.to_string_lossy().to_ascii_lowercase())
+                    .unwrap_or_default();
+                let is_raw = decode::is_raw_ext(&ext);
+                let (captured_at, _) = decode::read_exif_meta(file);
+                let dims = if is_raw { None } else { image::image_dimensions(file).ok() };
+                NewPhoto {
+                    path: file.to_string_lossy().to_string(),
+                    filename: file
+                        .file_name()
+                        .map(|s| s.to_string_lossy().to_string())
+                        .unwrap_or_default(),
+                    ext,
+                    is_raw,
+                    width: dims.map(|d| d.0),
+                    height: dims.map(|d| d.1),
+                    captured_at,
+                }
+            })
+            .collect();
+
         let cat = catalog.lock().map_err(|_| "catalog lock".to_string())?;
         let folder_id = cat.upsert_folder(&path).map_err(err)?;
-        let mut added = 0usize;
-        for file in &files {
-            let ext = file
-                .extension()
-                .map(|x| x.to_string_lossy().to_ascii_lowercase())
-                .unwrap_or_default();
-            let is_raw = decode::is_raw_ext(&ext);
-            let (captured, _) = decode::read_exif_meta(file);
-            let dims = if is_raw { None } else { image::image_dimensions(file).ok() };
-            if cat
-                .insert_photo(
-                    folder_id,
-                    file,
-                    &ext,
-                    is_raw,
-                    dims.map(|d| d.0),
-                    dims.map(|d| d.1),
-                    captured,
-                )
-                .map_err(err)?
-            {
-                added += 1;
-            }
-        }
+        let added = cat.insert_photos(folder_id, &items).map_err(err)?;
         Ok(ImportResult { folder_id, added, total: files.len() })
     })
     .await
-    .map_err(err)?
+    .map_err(err)??;
+
+    // fire-and-forget: pre-generate thumbnails so the grid is instant
+    let catalog = state.catalog.clone();
+    let thumbs_dir = state.thumbs_dir.clone();
+    let folder_id = res.folder_id;
+    tauri::async_runtime::spawn_blocking(move || {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let photos = match catalog.lock() {
+            Ok(c) => c.list_photos(Some(folder_id)).unwrap_or_default(),
+            Err(_) => return,
+        };
+        let total = photos.len();
+        let done = AtomicUsize::new(0);
+        let Ok(pool) = rayon::ThreadPoolBuilder::new().num_threads(2).build() else {
+            return;
+        };
+        pool.install(|| {
+            use rayon::prelude::*;
+            photos.par_iter().for_each(|p| {
+                let tp = crate::thumbs::thumb_path_for(&thumbs_dir, p.id, &p.path);
+                if !tp.exists() {
+                    let _ = crate::thumbs::ensure_thumb(&p.path, &tp);
+                }
+                let n = done.fetch_add(1, Ordering::Relaxed) + 1;
+                if n % 5 == 0 || n == total {
+                    let _ = app.emit("thumbs-progress", Progress { done: n, total });
+                }
+            });
+        });
+    });
+    Ok(res)
 }
 
 #[tauri::command]
@@ -110,6 +149,8 @@ pub fn list_photos(state: State<'_, AppState>, folder_id: Option<i64>) -> CmdRes
         .map_err(err)
 }
 
+/// Ensure the thumbnail exists and return its file path — the frontend loads
+/// it through the asset protocol (no base64, no IPC payload, browser cache).
 #[tauri::command]
 pub async fn get_thumbnail(state: State<'_, AppState>, photo_id: i64) -> CmdResult<String> {
     let path = state
@@ -120,19 +161,17 @@ pub async fn get_thumbnail(state: State<'_, AppState>, photo_id: i64) -> CmdResu
         .map_err(err)?;
     let thumb_path = crate::thumbs::thumb_path_for(&state.thumbs_dir, photo_id, &path);
     let dir = state.thumbs_dir.clone();
-    let bytes = tauri::async_runtime::spawn_blocking(move || {
-        if !thumb_path.exists() {
+    let tp = thumb_path.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        if !tp.exists() {
             // drop stale versions from a previous file at this (reused) id
             crate::thumbs::remove_thumbs_for(&dir, photo_id);
         }
-        crate::thumbs::ensure_thumb(&path, &thumb_path).map_err(err)
+        crate::thumbs::ensure_thumb(&path, &tp).map(|_| ()).map_err(err)
     })
     .await
     .map_err(err)??;
-    Ok(format!(
-        "data:image/jpeg;base64,{}",
-        base64::engine::general_purpose::STANDARD.encode(bytes)
-    ))
+    Ok(thumb_path.to_string_lossy().to_string())
 }
 
 #[derive(Serialize)]
@@ -142,6 +181,21 @@ pub struct RenderResult {
     pub width: usize,
     pub height: usize,
     pub histogram: histogram::Histogram,
+}
+
+/// FNV-1a of the pre-tone recipe parts; keys the cached pipeline stage.
+fn stage_key(r: &Recipe, ignore_crop: bool) -> u64 {
+    let json = serde_json::json!({
+        "s": &r.spots, "e": &r.redeye, "n": &r.negative, "r": r.rotate90,
+        "fh": r.flip_h, "fv": r.flip_v, "a": r.angle, "c": &r.crop, "ic": ignore_crop,
+    })
+    .to_string();
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in json.as_bytes() {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    h
 }
 
 #[tauri::command]
@@ -158,9 +212,26 @@ pub async fn render_preview(
         .photo_path(photo_id)
         .map_err(err)?;
     let cache = state.cache.clone();
+    let stage_cache = state.stage_cache.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let base = base_for(&cache, photo_id, &path)?;
-        let rendered = apply_recipe(&base, &recipe, ignore_crop.unwrap_or(false));
+        let ic = ignore_crop.unwrap_or(false);
+        let key = stage_key(&recipe, ic);
+        let cached = stage_cache
+            .lock()
+            .ok()
+            .and_then(|g| g.as_ref().filter(|e| e.photo_id == photo_id && e.key == key).map(|e| e.img.clone()));
+        let stage = match cached {
+            Some(s) => s,
+            None => {
+                let base = base_for(&cache, photo_id, &path)?;
+                let s = std::sync::Arc::new(prepare_stage(&base, &recipe, ic));
+                if let Ok(mut g) = stage_cache.lock() {
+                    *g = Some(StageEntry { photo_id, key, img: s.clone() });
+                }
+                s
+            }
+        };
+        let rendered = apply_tone(&stage, &recipe);
         let hist = histogram::compute(&rendered);
         let jpeg = export::encode_jpeg(&rendered, 88).map_err(err)?;
         Ok(RenderResult {
@@ -175,6 +246,22 @@ pub async fn render_preview(
     })
     .await
     .map_err(err)?
+}
+
+/// Warm the decode cache for a photo (used for filmstrip neighbours).
+#[tauri::command]
+pub fn prefetch_photo(state: State<'_, AppState>, photo_id: i64) -> CmdResult<()> {
+    let path = state
+        .catalog
+        .lock()
+        .map_err(|_| "catalog lock".to_string())?
+        .photo_path(photo_id)
+        .map_err(err)?;
+    let cache = state.cache.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let _ = base_for(&cache, photo_id, &path);
+    });
+    Ok(())
 }
 
 /// Median of a 5x5 window per channel at normalized coords.
@@ -327,15 +414,48 @@ pub fn get_edits(state: State<'_, AppState>, photo_id: i64) -> CmdResult<Option<
     }
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ExportOptions {
+    pub format: String,
+    pub quality: u8,
+    pub resize_mode: String,
+    pub resize_px: u32,
+    pub no_enlarge: bool,
+    pub name_pattern: String,
+    pub seq: u32,
+    pub on_conflict: String,
+}
+
+impl Default for ExportOptions {
+    fn default() -> Self {
+        Self {
+            format: "jpeg".into(),
+            quality: 90,
+            resize_mode: "none".into(),
+            resize_px: 2048,
+            no_enlarge: true,
+            name_pattern: "{name}-revela".into(),
+            seq: 1,
+            on_conflict: "unique".into(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportOutcome {
+    pub path: String,
+    pub skipped: bool,
+}
+
 #[tauri::command]
 pub async fn export_photo(
     state: State<'_, AppState>,
     photo_id: i64,
     dest_dir: String,
-    format: String,
-    quality: Option<u8>,
-    max_size: Option<u32>,
-) -> CmdResult<String> {
+    opts: ExportOptions,
+) -> CmdResult<ExportOutcome> {
     let (path, filename, recipe) = {
         let cat = state.catalog.lock().map_err(|_| "catalog lock".to_string())?;
         let path = cat.photo_path(photo_id).map_err(err)?;
@@ -348,30 +468,71 @@ pub async fn export_photo(
         (path, filename, recipe)
     };
     tauri::async_runtime::spawn_blocking(move || {
-        let base = decode::decode_base(Path::new(&path), max_size).map_err(err)?;
-        let rendered = apply_recipe(&base, &recipe, false);
         let stem = Path::new(&filename)
             .file_stem()
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| "photo".into());
-        let (bytes, ext) = match format.as_str() {
-            "png" => (export::encode_png(&rendered).map_err(err)?, "png"),
-            _ => (
-                export::encode_jpeg(&rendered, quality.unwrap_or(90)).map_err(err)?,
-                "jpg",
-            ),
-        };
-        let mut out_path = PathBuf::from(&dest_dir).join(format!("{stem}-revela.{ext}"));
-        let mut n = 1;
-        while out_path.exists() {
-            out_path = PathBuf::from(&dest_dir).join(format!("{stem}-revela-{n}.{ext}"));
-            n += 1;
+        let mut name = opts
+            .name_pattern
+            .replace("{name}", &stem)
+            .replace("{seq}", &format!("{:03}", opts.seq));
+        // strip characters Windows cannot store
+        name.retain(|c| !matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'));
+        if name.trim().is_empty() {
+            name = stem.clone();
         }
+        let (ext, sixteen) = match opts.format.as_str() {
+            "png" => ("png", false),
+            "tiff" => ("tif", false),
+            "tiff16" => ("tif", true),
+            _ => ("jpg", false),
+        };
+
+        let mut out_path = PathBuf::from(&dest_dir).join(format!("{name}.{ext}"));
+        if out_path.exists() {
+            match opts.on_conflict.as_str() {
+                "overwrite" => {}
+                "skip" => {
+                    return Ok(ExportOutcome {
+                        path: out_path.to_string_lossy().to_string(),
+                        skipped: true,
+                    });
+                }
+                _ => {
+                    let mut n = 1;
+                    while out_path.exists() {
+                        out_path = PathBuf::from(&dest_dir).join(format!("{name}-{n}.{ext}"));
+                        n += 1;
+                    }
+                }
+            }
+        }
+
+        let base = decode::decode_base(Path::new(&path), None).map_err(err)?;
+        let rendered = apply_recipe(&base, &recipe, false);
+        let rendered = export::resize_output(rendered, &opts.resize_mode, opts.resize_px, opts.no_enlarge);
+        let bytes = match opts.format.as_str() {
+            "png" => export::encode_png(&rendered).map_err(err)?,
+            "tiff" | "tiff16" => export::encode_tiff(&rendered, sixteen).map_err(err)?,
+            _ => export::encode_jpeg(&rendered, opts.quality.clamp(10, 100)).map_err(err)?,
+        };
         std::fs::write(&out_path, bytes).map_err(err)?;
-        Ok(out_path.to_string_lossy().to_string())
+        Ok(ExportOutcome {
+            path: out_path.to_string_lossy().to_string(),
+            skipped: false,
+        })
     })
     .await
     .map_err(err)?
+}
+
+#[tauri::command]
+pub fn open_in_explorer(path: String) -> CmdResult<()> {
+    std::process::Command::new("explorer")
+        .arg(&path)
+        .spawn()
+        .map_err(err)?;
+    Ok(())
 }
 
 #[derive(Serialize)]
@@ -578,7 +739,7 @@ pub struct DupResult {
 }
 
 #[derive(Clone, Serialize)]
-struct DupProgress {
+struct Progress {
     done: usize,
     total: usize,
 }
@@ -657,7 +818,7 @@ pub async fn find_duplicates(
                     })();
                     let n = done.fetch_add(1, Ordering::Relaxed) + 1;
                     if n % 5 == 0 || n == total {
-                        let _ = app.emit("dup-progress", DupProgress { done: n, total });
+                        let _ = app.emit("dup-progress", Progress { done: n, total });
                     }
                     res
                 })

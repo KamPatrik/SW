@@ -29,21 +29,23 @@ pub struct CropRect {
     pub h: f32,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Spot {
     pub x: f32,
     pub y: f32,
     /// Radius relative to image width.
     pub radius: f32,
-    /// Optional stroke end point — the spot becomes a capsule (streak heal).
+    /// Optional stroke end point — legacy straight strokes.
     pub x2: Option<f32>,
     pub y2: Option<f32>,
+    /// Optional freehand polyline (normalized coords) — healed as one region.
+    pub path: Option<Vec<[f32; 2]>>,
 }
 
 impl Default for Spot {
     fn default() -> Self {
-        Self { x: 0.5, y: 0.5, radius: 0.01, x2: None, y2: None }
+        Self { x: 0.5, y: 0.5, radius: 0.01, x2: None, y2: None, path: None }
     }
 }
 
@@ -117,10 +119,10 @@ fn wb_factors(temp: f32, tint: f32) -> [f32; 3] {
     ]
 }
 
-/// Run the full non-destructive recipe on a linear-light base image.
-/// Returns a display-encoded (approx. sRGB gamma) image ready for RGB8 packing.
-pub fn apply_recipe(base: &ImageF32, r: &Recipe, ignore_crop: bool) -> ImageF32 {
-    // orientation first: retouch coordinates live in the rotated (pre-crop) space
+/// Heal, red-eye, orientation, crop and negative conversion — everything
+/// ahead of the tone controls. Cached between renders while only tone
+/// sliders move.
+pub fn prepare_stage(base: &ImageF32, r: &Recipe, ignore_crop: bool) -> ImageF32 {
     let mut img = geometry::apply_orient(base.clone(), r);
     img = retouch::heal_spots(&img, &r.spots);
     retouch::fix_redeye(&mut img, &r.redeye);
@@ -128,6 +130,19 @@ pub fn apply_recipe(base: &ImageF32, r: &Recipe, ignore_crop: bool) -> ImageF32 
     if r.negative.enabled {
         img = negative::convert(&img, &r.negative);
     }
+    img
+}
+
+/// Run the full non-destructive recipe on a linear-light base image.
+/// Returns a display-encoded (approx. sRGB gamma) image ready for RGB8 packing.
+pub fn apply_recipe(base: &ImageF32, r: &Recipe, ignore_crop: bool) -> ImageF32 {
+    let stage = prepare_stage(base, r, ignore_crop);
+    apply_tone(&stage, r)
+}
+
+/// Tone/colour part of the pipeline: WB, exposure, curves, effects.
+pub fn apply_tone(stage: &ImageF32, r: &Recipe) -> ImageF32 {
+    let mut img = stage.clone();
 
     let wb = wb_factors(r.wb_temp, r.wb_tint);
     let exp = 2f32.powf(r.exposure);

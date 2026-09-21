@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { sendViewerState } from "./secondWindow";
 import { useStore } from "./store";
 import TopBar from "./components/TopBar";
 import LibraryView from "./components/LibraryView";
@@ -12,6 +13,34 @@ export default function App() {
   useEffect(() => {
     void useStore.getState().refreshFolders();
     void useStore.getState().refreshPhotos();
+  }, []);
+
+  // keep the second window in sync with the active photo & live edits
+  useEffect(() => {
+    let un: (() => void) | undefined;
+    let unThumbs: (() => void) | undefined;
+    let t: ReturnType<typeof setTimeout> | undefined;
+    void (async () => {
+      const { listen } = await import("@tauri-apps/api/event");
+      un = await listen("viewer-ready", () => void sendViewerState());
+      unThumbs = await listen<{ done: number; total: number }>("thumbs-progress", (e) => {
+        useStore
+          .getState()
+          .setThumbsProgress(e.payload.done >= e.payload.total ? null : e.payload);
+      });
+    })();
+    const unsub = useStore.subscribe((state, prev) => {
+      if (state.activeId !== prev.activeId || state.recipe !== prev.recipe) {
+        if (t) clearTimeout(t);
+        t = setTimeout(() => void sendViewerState(), 150);
+      }
+    });
+    return () => {
+      if (t) clearTimeout(t);
+      un?.();
+      unThumbs?.();
+      unsub();
+    };
   }, []);
 
   useEffect(() => {
@@ -51,6 +80,10 @@ export default function App() {
         if (confirm(`Remove ${targets.length} photo(s) from the catalog? Files stay on disk.`)) {
           void s.removePhotos(targets);
         }
+        return;
+      }
+      if (s.view === "library" && (e.key === "+" || e.key === "=" || e.key === "-")) {
+        s.setThumbSize(s.thumbSize + (e.key === "-" ? -20 : 20));
         return;
       }
       switch (e.key) {

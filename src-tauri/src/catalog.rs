@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use anyhow::Result;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -37,6 +37,17 @@ pub struct Photo {
     pub tags: Vec<String>,
     pub dup_group: Option<i64>,
     pub dup_best: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewPhoto {
+    pub path: String,
+    pub filename: String,
+    pub ext: String,
+    pub is_raw: bool,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub captured_at: Option<String>,
 }
 
 pub struct Catalog {
@@ -118,37 +129,32 @@ impl Catalog {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn insert_photo(
-        &self,
-        folder_id: i64,
-        path: &Path,
-        ext: &str,
-        is_raw: bool,
-        width: Option<u32>,
-        height: Option<u32>,
-        captured_at: Option<String>,
-    ) -> Result<bool> {
-        let filename = path
-            .file_name()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_default();
+    pub fn insert_photos(&self, folder_id: i64, items: &[NewPhoto]) -> Result<usize> {
+        // single transaction: one fsync instead of one per row
+        let tx = self.conn.unchecked_transaction()?;
         let now = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string();
-        let n = self.conn.execute(
-            "INSERT OR IGNORE INTO photos(folder_id, path, filename, ext, is_raw, width, height, captured_at, imported_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            params![
-                folder_id,
-                path.to_string_lossy(),
-                filename,
-                ext,
-                is_raw,
-                width,
-                height,
-                captured_at,
-                now
-            ],
-        )?;
-        Ok(n > 0)
+        let mut added = 0usize;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT OR IGNORE INTO photos(folder_id, path, filename, ext, is_raw, width, height, captured_at, imported_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            )?;
+            for it in items {
+                added += stmt.execute(params![
+                    folder_id,
+                    it.path,
+                    it.filename,
+                    it.ext,
+                    it.is_raw,
+                    it.width,
+                    it.height,
+                    it.captured_at,
+                    now
+                ])?;
+            }
+        }
+        tx.commit()?;
+        Ok(added)
     }
 
     pub fn list_photos(&self, folder_id: Option<i64>) -> Result<Vec<Photo>> {

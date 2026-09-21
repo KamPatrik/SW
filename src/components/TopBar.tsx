@@ -1,3 +1,4 @@
+import { toggleSecondWindow } from "../secondWindow";
 import { useStore } from "../store";
 
 export default function TopBar() {
@@ -8,6 +9,7 @@ export default function TopBar() {
   const setExportOpen = useStore((s) => s.setExportOpen);
   const importing = useStore((s) => s.importing);
   const importFolder = useStore((s) => s.importFolder);
+  const thumbsProgress = useStore((s) => s.thumbsProgress);
 
   return (
     <header className="topbar">
@@ -28,6 +30,18 @@ export default function TopBar() {
         </button>
       </nav>
       <div className="topbar-right">
+        {thumbsProgress && (
+          <span className="thumbs-progress" title="Generating previews in the background">
+            previews {thumbsProgress.done}/{thumbsProgress.total}
+          </span>
+        )}
+        <button
+          className="btn"
+          title="Show the photo big on a second window — lands on your other monitor when one is connected"
+          onClick={() => void toggleSecondWindow()}
+        >
+          ⧉ 2nd screen
+        </button>
         <button className="btn" onClick={() => void importFolder()} disabled={importing}>
           {importing ? "Importing…" : "Import folder"}
         </button>

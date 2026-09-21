@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { filteredPhotos, useStore } from "../store";
 import type { Photo } from "../types";
@@ -38,9 +38,23 @@ function Thumb({ photo }: { photo: Photo }) {
   const url = useStore((s) => s.thumbs[photo.id]);
   const isActive = useStore((s) => s.activeId === photo.id);
   const isSelected = useStore((s) => s.selection.includes(photo.id));
+  const cardRef = useRef<HTMLDivElement>(null);
 
+  // request the thumbnail only once the card becomes visible
   useEffect(() => {
-    useStore.getState().requestThumb(photo.id);
+    const el = cardRef.current;
+    if (!el) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          useStore.getState().requestThumb(photo.id);
+          io.disconnect();
+        }
+      },
+      { rootMargin: "300px" },
+    );
+    io.observe(el);
+    return () => io.disconnect();
   }, [photo.id]);
 
   const onClick = (e: React.MouseEvent) => {
@@ -52,6 +66,7 @@ function Thumb({ photo }: { photo: Photo }) {
 
   return (
     <div
+      ref={cardRef}
       className={
         "card" + (isActive ? " active" : "") + (!isActive && isSelected ? " selected" : "")
       }
@@ -186,6 +201,10 @@ export default function LibraryView() {
   const dupSummary = useStore((s) => s.dupSummary);
   const anyDups = useStore((s) => s.photos.some((p) => p.dupGroup !== null));
   const [dupStrict, setDupStrict] = useState("normal");
+  const thumbSize = useStore((s) => s.thumbSize);
+  const setThumbSize = useStore((s) => s.setThumbSize);
+  const thumbFit = useStore((s) => s.thumbFit);
+  const setThumbFit = useStore((s) => s.setThumbFit);
   // useShallow is required: a plain array-returning selector would create a new
   // reference on every snapshot and send React into an infinite render loop.
   const photos = useStore(useShallow(filteredPhotos));
@@ -333,6 +352,31 @@ export default function LibraryView() {
               </>
             )}
           </span>
+          <span className="size-ctl">
+            <button
+              className={thumbFit === "contain" ? "chip on" : "chip"}
+              title="Show the whole photo in each cell"
+              onClick={() => setThumbFit("contain")}
+            >
+              Fit
+            </button>
+            <button
+              className={thumbFit === "cover" ? "chip on" : "chip"}
+              title="Fill the square cell (crops the preview)"
+              onClick={() => setThumbFit("cover")}
+            >
+              Fill
+            </button>
+            <input
+              type="range"
+              min={110}
+              max={340}
+              step={10}
+              value={thumbSize}
+              title="Thumbnail size (+/-)"
+              onChange={(e) => setThumbSize(Number(e.target.value))}
+            />
+          </span>
           <span className="filter-count">
             {photos.length} / {total}
           </span>
@@ -348,7 +392,14 @@ export default function LibraryView() {
             </p>
           </div>
         ) : (
-          <div className="grid">
+          <div
+            className={
+              "grid" +
+              (thumbSize < 150 ? " compact" : "") +
+              (thumbFit === "cover" ? " cover" : "")
+            }
+            style={{ "--thumb": `${thumbSize}px` } as React.CSSProperties}
+          >
             {photos.map((p) => (
               <Thumb key={p.id} photo={p} />
             ))}

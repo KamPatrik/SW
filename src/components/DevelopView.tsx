@@ -101,8 +101,10 @@ export default function DevelopView() {
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const panRef = useRef<{ startX: number; startY: number; px: number; py: number } | null>(null);
 
-  const strokeRef = useRef<{ x: number; y: number; moved: boolean; hit: number } | null>(null);
-  const [stroke, setStroke] = useState<{ x: number; y: number; x2: number; y2: number } | null>(null);
+  const strokeRef = useRef<{ pts: { x: number; y: number }[]; moved: boolean; hit: number } | null>(
+    null,
+  );
+  const [stroke, setStroke] = useState<{ x: number; y: number }[] | null>(null);
 
   const [editingName, setEditingName] = useState(false);
   const [nameVal, setNameVal] = useState("");
@@ -112,6 +114,21 @@ export default function DevelopView() {
     setPan({ x: 0, y: 0 });
     setEditingName(false);
     setBefore(null);
+  }, [activeId]);
+
+  // warm the decode cache for filmstrip neighbours — arrow keys feel instant
+  useEffect(() => {
+    if (activeId === null) return;
+    const t = setTimeout(() => {
+      const ph = filteredPhotos(useStore.getState());
+      const idx = ph.findIndex((p) => p.id === activeId);
+      if (idx < 0) return;
+      for (const n of [idx + 1, idx - 1]) {
+        const p = ph[n];
+        if (p) void api.prefetchPhoto(p.id).catch(() => {});
+      }
+    }, 400);
+    return () => clearTimeout(t);
   }, [activeId]);
 
   // lazy "before" render (original with default recipe) for the \ comparison
@@ -247,14 +264,33 @@ export default function DevelopView() {
 
   const hitSpot = (x: number, y: number): number =>
     recipe.spots.findIndex((s) => {
-      const d = segDistPx(
-        x * dispW,
-        y * dispH,
-        fsx(s.x) * dispW,
-        fsy(s.y) * dispH,
-        fsx(s.x2 ?? s.x) * dispW,
-        fsy(s.y2 ?? s.y) * dispH,
-      );
+      const px = x * dispW;
+      const py = y * dispH;
+      let d = Infinity;
+      if (s.path && s.path.length >= 2) {
+        for (let i = 0; i + 1 < s.path.length; i++) {
+          d = Math.min(
+            d,
+            segDistPx(
+              px,
+              py,
+              fsx(s.path[i][0]) * dispW,
+              fsy(s.path[i][1]) * dispH,
+              fsx(s.path[i + 1][0]) * dispW,
+              fsy(s.path[i + 1][1]) * dispH,
+            ),
+          );
+        }
+      } else {
+        d = segDistPx(
+          px,
+          py,
+          fsx(s.x) * dispW,
+          fsy(s.y) * dispH,
+          fsx(s.x2 ?? s.x) * dispW,
+          fsy(s.y2 ?? s.y) * dispH,
+        );
+      }
       return d <= (s.radius / cw) * dispW + 4;
     });
 
@@ -270,8 +306,7 @@ export default function DevelopView() {
     e.stopPropagation();
     const c = normCoords(e);
     strokeRef.current = {
-      x: c.x,
-      y: c.y,
+      pts: [c],
       moved: false,
       hit: tool === "spot" ? hitSpot(c.x, c.y) : hitEye(c.x, c.y),
     };
@@ -281,9 +316,12 @@ export default function DevelopView() {
     const st = strokeRef.current;
     if (!st || tool !== "spot") return;
     const c = normCoords(e);
-    if (Math.hypot((c.x - st.x) * dispW, (c.y - st.y) * dispH) > 5) {
-      st.moved = true;
-      setStroke({ x: st.x, y: st.y, x2: c.x, y2: c.y });
+    const last = st.pts[st.pts.length - 1];
+    if (Math.hypot((c.x - last.x) * dispW, (c.y - last.y) * dispH) > 4) {
+      st.pts.push(c);
+      const first = st.pts[0];
+      if (Math.hypot((c.x - first.x) * dispW, (c.y - first.y) * dispH) > 5) st.moved = true;
+      setStroke([...st.pts]);
     }
   };
   const onSpotPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -300,25 +338,39 @@ export default function DevelopView() {
         updateRecipe({
           redeye: [
             ...recipe.redeye,
-            { x: sp.x, y: sp.y, radius: spotRadius * cw, x2: null, y2: null },
+            { x: sp.x, y: sp.y, radius: spotRadius * cw, x2: null, y2: null, path: null },
           ],
         });
       }
       return;
     }
     if (tool !== "spot") return;
-    if (st.moved) {
-      const a = toStored({ x: st.x, y: st.y });
-      const b = toStored(c);
+    if (st.moved && st.pts.length >= 2) {
+      // freehand stroke: cap point count, store in pre-crop coordinates
+      const maxPts = 64;
+      const step = Math.max(1, Math.ceil(st.pts.length / maxPts));
+      const sampled = st.pts.filter((_, i) => i % step === 0);
+      const lastPt = st.pts[st.pts.length - 1];
+      if (sampled[sampled.length - 1] !== lastPt) sampled.push(lastPt);
+      const path = sampled.map((p) => {
+        const sp = toStored(p);
+        return [sp.x, sp.y] as [number, number];
+      });
       updateRecipe({
-        spots: [...recipe.spots, { x: a.x, y: a.y, radius: spotRadius * cw, x2: b.x, y2: b.y }],
+        spots: [
+          ...recipe.spots,
+          { x: path[0][0], y: path[0][1], radius: spotRadius * cw, x2: null, y2: null, path },
+        ],
       });
     } else if (st.hit >= 0) {
       updateRecipe({ spots: recipe.spots.filter((_, i) => i !== st.hit) });
     } else {
       const a = toStored(c);
       updateRecipe({
-        spots: [...recipe.spots, { x: a.x, y: a.y, radius: spotRadius * cw, x2: null, y2: null }],
+        spots: [
+          ...recipe.spots,
+          { x: a.x, y: a.y, radius: spotRadius * cw, x2: null, y2: null, path: null },
+        ],
       });
     }
   };
@@ -508,7 +560,19 @@ export default function DevelopView() {
               {tool === "spot" && (
                 <svg className="spot-overlay" viewBox={`0 0 ${dispW} ${dispH}`}>
                   {recipe.spots.map((s, i) =>
-                    s.x2 != null && s.y2 != null ? (
+                    s.path && s.path.length >= 2 ? (
+                      <polyline
+                        key={i}
+                        points={s.path
+                          .map((p) => `${fsx(p[0]) * dispW},${fsy(p[1]) * dispH}`)
+                          .join(" ")}
+                        className="spot-stroke"
+                        fill="none"
+                        strokeWidth={(s.radius / cw) * dispW * 2}
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    ) : s.x2 != null && s.y2 != null ? (
                       <line
                         key={i}
                         x1={fsx(s.x) * dispW}
@@ -529,15 +593,14 @@ export default function DevelopView() {
                       />
                     ),
                   )}
-                  {stroke && (
-                    <line
-                      x1={stroke.x * dispW}
-                      y1={stroke.y * dispH}
-                      x2={stroke.x2 * dispW}
-                      y2={stroke.y2 * dispH}
+                  {stroke && stroke.length >= 2 && (
+                    <polyline
+                      points={stroke.map((p) => `${p.x * dispW},${p.y * dispH}`).join(" ")}
                       className="spot-stroke live"
+                      fill="none"
                       strokeWidth={spotRadius * dispW * 2}
                       strokeLinecap="round"
+                      strokeLinejoin="round"
                     />
                   )}
                 </svg>

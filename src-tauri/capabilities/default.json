@@ -1,6 +1,17 @@
 {
   "identifier": "default",
-  "description": "Default capabilities for the main Revela window",
-  "windows": ["main"],
-  "permissions": ["core:default", "dialog:default"]
+  "description": "Default capabilities for the Revela windows",
+  "windows": ["main", "viewer"],
+  "permissions": [
+    "core:default",
+    "dialog:default",
+    "core:window:allow-available-monitors",
+    "core:window:allow-outer-position",
+    "core:window:allow-outer-size",
+    "core:window:allow-maximize",
+    "core:window:allow-set-position",
+    "core:window:allow-set-focus",
+    "core:window:allow-close",
+    "core:webview:allow-create-webview-window"
+  ]
 }

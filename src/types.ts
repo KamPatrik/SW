@@ -46,8 +46,9 @@ export interface Spot {
   x: number;
   y: number;
   radius: number; // relative to image width
-  x2: number | null; // stroke end point; null = circular spot
+  x2: number | null; // legacy straight-stroke end point
   y2: number | null;
+  path: [number, number][] | null; // freehand polyline, normalized coords
 }
 
 export interface Preset {
@@ -113,6 +114,17 @@ export interface ExifInfo {
   fileSize: number | null;
 }
 
+export interface ExportOptions {
+  format: string; // jpeg | png | tiff | tiff16
+  quality: number;
+  resizeMode: string; // none | long | short | width | height
+  resizePx: number;
+  noEnlarge: boolean;
+  namePattern: string; // {name}, {seq} tokens
+  seq: number;
+  onConflict: string; // unique | overwrite | skip
+}
+
 export type Tool = "none" | "spot" | "crop" | "pickBase" | "pickWb" | "redeye";
 
 export const DEFAULT_RECIPE: Recipe = {
@@ -151,7 +163,13 @@ export function cloneRecipe(r: Recipe): Recipe {
     negative: { ...r.negative, filmBase: r.negative.filmBase ? [...r.negative.filmBase] : null },
     toneCurve: r.toneCurve.map((p) => [...p] as [number, number]),
     crop: r.crop ? { ...r.crop } : null,
-    spots: r.spots.map((s) => ({ ...s })),
-    redeye: r.redeye.map((s) => ({ ...s })),
+    spots: r.spots.map((s) => ({
+      ...s,
+      path: s.path ? s.path.map((p) => [...p] as [number, number]) : null,
+    })),
+    redeye: r.redeye.map((s) => ({
+      ...s,
+      path: s.path ? s.path.map((p) => [...p] as [number, number]) : null,
+    })),
   };
 }

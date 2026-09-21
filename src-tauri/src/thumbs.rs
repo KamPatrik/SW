@@ -5,10 +5,10 @@ use image::ImageEncoder;
 
 use crate::engine::decode;
 
-pub const THUMB_SIZE: u32 = 384;
+pub const THUMB_SIZE: u32 = 512;
 
-/// Deterministic FNV-1a over path + size + mtime. SQLite reuses row ids after
-/// deletes, so thumbnails must be keyed by content, not by photo id alone.
+/// Deterministic FNV-1a over path + size + mtime + thumb size. SQLite reuses
+/// row ids after deletes, so thumbnails must be keyed by content, not id alone.
 fn content_key(photo_path: &str) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     let mut feed = |bytes: &[u8]| {
@@ -18,6 +18,7 @@ fn content_key(photo_path: &str) -> u64 {
         }
     };
     feed(photo_path.as_bytes());
+    feed(&THUMB_SIZE.to_le_bytes());
     if let Ok(md) = std::fs::metadata(photo_path) {
         feed(&md.len().to_le_bytes());
         if let Ok(mt) = md.modified() {

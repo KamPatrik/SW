@@ -74,6 +74,8 @@ pub fn run() {
             commands::remove_photos,
             commands::find_duplicates,
             commands::clear_duplicates,
+            commands::prefetch_photo,
+            commands::open_in_explorer,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Revela");

@@ -32,7 +32,7 @@ export default function Histogram({ data }: { data: HistogramData | null }) {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     ctx.clearRect(0, 0, W, H);
-    ctx.fillStyle = "#141519";
+    ctx.fillStyle = "#131417";
     ctx.fillRect(0, 0, W, H);
     if (!data) return;
     const max = Math.max(1, ...data.r, ...data.g, ...data.b, ...data.l);

@@ -263,7 +263,7 @@ export default function Panels({ histogram }: { histogram: HistogramData | null 
           onChange={(v) => setSpotRadius(v / 1000)}
           format={(v) => (v / 10).toFixed(1) + "%"}
         />
-        <div className="hint">Click to heal a spot · drag to heal a streak · click a mark to remove it</div>
+        <div className="hint">Click to heal a spot · draw any shape to heal it · click a mark to remove it</div>
       </Section>
 
       <Section title="Red eye">

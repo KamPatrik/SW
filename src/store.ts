@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import * as api from "./api";
 import {
   cloneRecipe,
@@ -41,6 +42,9 @@ interface AppStore {
   filterDups: boolean;
   dupScan: { done: number; total: number } | null;
   dupSummary: string | null;
+  thumbSize: number;
+  thumbFit: "contain" | "cover";
+  thumbsProgress: { done: number; total: number } | null;
 
   setView(v: "library" | "develop"): void;
   refreshFolders(): Promise<void>;
@@ -88,6 +92,9 @@ interface AppStore {
   clearDuplicates(): Promise<void>;
   setFilterDups(v: boolean): void;
   rejectNonBest(): Promise<void>;
+  setThumbSize(px: number): void;
+  setThumbFit(f: "contain" | "cover"): void;
+  setThumbsProgress(p: { done: number; total: number } | null): void;
 }
 
 export function filteredPhotos(s: {
@@ -162,6 +169,18 @@ let pendingSave: { id: number; recipe: Recipe } | null = null;
 // history entries are coalesced in time so a slider drag is one undo step
 let lastHistoryAt = 0;
 
+const THUMB_MIN = 110;
+const THUMB_MAX = 340;
+
+function loadThumbPrefs(): { size: number; fit: "contain" | "cover" } {
+  const size = Number(localStorage.getItem("revela.thumbSize"));
+  return {
+    size: Number.isFinite(size) && size >= THUMB_MIN && size <= THUMB_MAX ? size : 190,
+    fit: localStorage.getItem("revela.thumbFit") === "cover" ? "cover" : "contain",
+  };
+}
+const thumbPrefs = loadThumbPrefs();
+
 function flushSave() {
   if (saveTimer !== undefined) clearTimeout(saveTimer);
   saveTimer = undefined;
@@ -174,14 +193,16 @@ function flushSave() {
 
 export const useStore = create<AppStore>()((set, get) => {
   const pumpThumbs = () => {
-    while (thumbInFlight < 3 && thumbQueue.length > 0) {
+    while (thumbInFlight < 4 && thumbQueue.length > 0) {
       const id = thumbQueue.shift()!;
       const gen = thumbGen;
       thumbInFlight++;
       api
         .getThumbnail(id)
-        .then((url) => {
-          if (gen === thumbGen) set((s) => ({ thumbs: { ...s.thumbs, [id]: url } }));
+        .then((path) => {
+          // asset protocol: the webview streams & caches the file itself
+          if (gen === thumbGen)
+            set((s) => ({ thumbs: { ...s.thumbs, [id]: convertFileSrc(path) } }));
         })
         .catch(() => {})
         .finally(() => {
@@ -246,6 +267,9 @@ export const useStore = create<AppStore>()((set, get) => {
     filterDups: false,
     dupScan: null,
     dupSummary: null,
+    thumbSize: thumbPrefs.size,
+    thumbFit: thumbPrefs.fit,
+    thumbsProgress: null,
 
     setView: (v) => set({ view: v, tool: "none" }),
 
@@ -553,5 +577,18 @@ export const useStore = create<AppStore>()((set, get) => {
       if (ids.length === 0) return;
       await get().setFlag(ids, 2);
     },
+
+    setThumbSize: (px) => {
+      const size = Math.min(THUMB_MAX, Math.max(THUMB_MIN, Math.round(px)));
+      localStorage.setItem("revela.thumbSize", String(size));
+      set({ thumbSize: size });
+    },
+
+    setThumbFit: (f) => {
+      localStorage.setItem("revela.thumbFit", f);
+      set({ thumbFit: f });
+    },
+
+    setThumbsProgress: (p) => set({ thumbsProgress: p }),
   };
 });

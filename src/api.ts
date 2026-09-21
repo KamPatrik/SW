@@ -1,5 +1,15 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { DupResult, ExifInfo, Folder, ImportResult, Photo, Preset, Recipe, RenderResult } from "./types";
+import type {
+  DupResult,
+  ExifInfo,
+  ExportOptions,
+  Folder,
+  ImportResult,
+  Photo,
+  Preset,
+  Recipe,
+  RenderResult,
+} from "./types";
 
 export const importFolder = (path: string) => invoke<ImportResult>("import_folder", { path });
 
@@ -11,6 +21,8 @@ export const listPhotos = (folderId: number | null) =>
   invoke<Photo[]>("list_photos", { folderId });
 
 export const getThumbnail = (photoId: number) => invoke<string>("get_thumbnail", { photoId });
+
+export const prefetchPhoto = (photoId: number) => invoke<void>("prefetch_photo", { photoId });
 
 export const renderPreview = (photoId: number, recipe: Recipe, ignoreCrop: boolean) =>
   invoke<RenderResult>("render_preview", { photoId, recipe, ignoreCrop });
@@ -50,13 +62,10 @@ export const saveEdits = (photoId: number, recipe: Recipe) =>
 
 export const getEdits = (photoId: number) => invoke<Recipe | null>("get_edits", { photoId });
 
-export const exportPhoto = (
-  photoId: number,
-  destDir: string,
-  format: "jpeg" | "png",
-  quality?: number,
-  maxSize?: number,
-) => invoke<string>("export_photo", { photoId, destDir, format, quality, maxSize });
+export const exportPhoto = (photoId: number, destDir: string, opts: ExportOptions) =>
+  invoke<{ path: string; skipped: boolean }>("export_photo", { photoId, destDir, opts });
+
+export const openInExplorer = (path: string) => invoke<void>("open_in_explorer", { path });
 
 export const renamePhoto = (photoId: number, newStem: string) =>
   invoke<{ path: string; filename: string }>("rename_photo", { photoId, newStem });

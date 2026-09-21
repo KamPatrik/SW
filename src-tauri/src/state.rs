@@ -50,9 +50,18 @@ pub fn base_for(cache: &Arc<Mutex<PreviewCache>>, id: i64, path: &str) -> Result
     Ok(img)
 }
 
+/// Post-retouch/geometry/negative intermediate, reused while only tone
+/// sliders change (they are the hot path when dragging).
+pub struct StageEntry {
+    pub photo_id: i64,
+    pub key: u64,
+    pub img: Arc<ImageF32>,
+}
+
 pub struct AppState {
     pub catalog: Arc<Mutex<Catalog>>,
     pub cache: Arc<Mutex<PreviewCache>>,
+    pub stage_cache: Arc<Mutex<Option<StageEntry>>>,
     pub thumbs_dir: PathBuf,
 }
 
@@ -60,7 +69,8 @@ impl AppState {
     pub fn new(catalog: Catalog, thumbs_dir: PathBuf) -> Self {
         Self {
             catalog: Arc::new(Mutex::new(catalog)),
-            cache: Arc::new(Mutex::new(PreviewCache::new(3))),
+            cache: Arc::new(Mutex::new(PreviewCache::new(4))),
+            stage_cache: Arc::new(Mutex::new(None)),
             thumbs_dir,
         }
     }
