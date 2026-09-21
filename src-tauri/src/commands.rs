@@ -33,7 +33,7 @@ pub async fn import_folder(
     path: String,
 ) -> CmdResult<ImportResult> {
     let catalog = state.catalog.clone();
-    let res = tauri::async_runtime::spawn_blocking(move || {
+    let res = tauri::async_runtime::spawn_blocking(move || -> CmdResult<ImportResult> {
         use rayon::prelude::*;
         let files: Vec<PathBuf> = WalkDir::new(&path)
             .max_depth(10)

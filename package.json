@@ -1,7 +1,7 @@
 {
   "name": "revela",
   "private": true,
-  "version": "0.10.0",
+  "version": "0.10.1",
   "type": "module",
   "license": "GPL-3.0-or-later",
   "description": "Revela — free, open-source photo catalog & darkroom (Lightroom alternative) with film negative conversion.",
